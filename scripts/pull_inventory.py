@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Pull FBA Inventory Report from SP-API
+Pull FBA Inventory from SP-API using the FBA Inventory API
 
-This script pulls the current FBA inventory snapshot for a marketplace.
-Report type: GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA
+This script pulls the current FBA inventory snapshot using the FBA Inventory API v1
+(getInventorySummaries endpoint), which is more reliable than the report-based approach.
 
 Fields captured:
-- fulfillable_quantity (afn-fulfillable-quantity)
-- reserved_quantity (afn-reserved-quantity)
-- inbound_working_quantity (afn-inbound-working-quantity)
-- inbound_shipped_quantity (afn-inbound-shipped-quantity)
-- unsellable_quantity (afn-unsellable-quantity)
+- fulfillable_quantity (ready to ship)
+- reserved_quantity (pending orders/transfers)
+- inbound_working_quantity (shipments being prepared)
+- inbound_shipped_quantity (shipments in transit)
+- unsellable_quantity (damaged/defective)
 
 Usage:
     python pull_inventory.py                          # All NA marketplaces
@@ -29,27 +29,16 @@ from typing import Dict, List, Any
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.auth import get_access_token
-from utils.inventory_reports import pull_inventory_report, MARKETPLACE_IDS
+from utils.fba_inventory_api import pull_fba_inventory, MARKETPLACE_IDS
 from utils.db import (
     get_supabase_client,
     create_data_import,
     update_data_import,
-    MARKETPLACE_UUIDS,
-    AMAZON_MARKETPLACE_IDS
+    MARKETPLACE_UUIDS
 )
 
 # Default marketplaces to pull
 DEFAULT_MARKETPLACES = ["USA", "CA", "MX"]
-
-
-def parse_int(value: str) -> int:
-    """Parse string to int, handling empty strings and None."""
-    if value is None or value == '' or value == 'N/A':
-        return 0
-    try:
-        return int(float(value))
-    except (ValueError, TypeError):
-        return 0
 
 
 def create_inventory_pull_record(
@@ -109,7 +98,7 @@ def upsert_fba_inventory(
     Upsert FBA inventory data to database.
 
     Args:
-        rows: Parsed report rows
+        rows: Transformed inventory records from the API
         marketplace_code: Marketplace code
         import_id: Data import tracking ID
 
@@ -123,35 +112,19 @@ def upsert_fba_inventory(
     if not rows:
         return 0
 
-    # Transform to database format
+    # Add date, marketplace_id, and import_id to each row
     db_rows = []
     for row in rows:
         db_row = {
             "date": today.isoformat(),
             "marketplace_id": marketplace_id,
-            "sku": row.get("sku", ""),
-            "asin": row.get("asin"),
-            "fnsku": row.get("fnsku"),
-            "product_name": row.get("product-name"),
-            "condition": row.get("condition"),
-
-            # Core inventory metrics
-            "fulfillable_quantity": parse_int(row.get("afn-fulfillable-quantity")),
-            "reserved_quantity": parse_int(row.get("afn-reserved-quantity")),
-            "inbound_working_quantity": parse_int(row.get("afn-inbound-working-quantity")),
-            "inbound_shipped_quantity": parse_int(row.get("afn-inbound-shipped-quantity")),
-            "unsellable_quantity": parse_int(row.get("afn-unsellable-quantity")),
-
-            "import_id": import_id
+            "import_id": import_id,
+            **row
         }
-
-        # Skip rows without SKU
-        if db_row["sku"]:
-            db_rows.append(db_row)
+        db_rows.append(db_row)
 
     # Batch upsert
     if db_rows:
-        # Supabase has a limit on batch size, chunk if needed
         chunk_size = 500
         for i in range(0, len(db_rows), chunk_size):
             chunk = db_rows[i:i + chunk_size]
@@ -176,7 +149,7 @@ def pull_marketplace_inventory(
         Dict with status information
     """
     start_time = time.time()
-    report_type = "GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA"
+    report_type = "FBA_INVENTORY_API"  # Using API, not reports
 
     print(f"\n{'='*50}")
     print(f"Pulling FBA inventory for {marketplace_code}")
@@ -195,8 +168,8 @@ def pull_marketplace_inventory(
         pull_id = create_inventory_pull_record(marketplace_code, report_type, import_id)
 
     try:
-        # Pull the report
-        rows = pull_inventory_report(access_token, marketplace_code, "FBA_INVENTORY", region)
+        # Pull using the FBA Inventory API
+        rows = pull_fba_inventory(access_token, marketplace_code, region)
 
         if dry_run:
             print(f"\n[DRY RUN] Would upsert {len(rows)} inventory records")
@@ -275,7 +248,7 @@ def main():
             sys.exit(1)
 
     print("="*60)
-    print("FBA INVENTORY PULL")
+    print("FBA INVENTORY PULL (API)")
     print(f"Date: {date.today()}")
     print(f"Marketplaces: {', '.join(marketplaces)}")
     print(f"Dry run: {args.dry_run}")
@@ -289,10 +262,10 @@ def main():
     # Process each marketplace
     results = []
     for i, marketplace in enumerate(marketplaces):
-        # Rate limit between marketplaces
+        # Small delay between marketplaces (API is much faster than reports)
         if i > 0:
-            print("\nWaiting 65 seconds (rate limit)...")
-            time.sleep(65)
+            print("\nWaiting 5 seconds between marketplaces...")
+            time.sleep(5)
 
         result = pull_marketplace_inventory(
             access_token,
