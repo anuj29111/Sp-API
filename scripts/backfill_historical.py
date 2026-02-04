@@ -81,13 +81,25 @@ def save_state(state: Dict):
         json.dump(state, f, indent=2, default=str)
 
 
-def get_date_range(start_date: date, end_date: date) -> List[date]:
-    """Generate list of dates from start to end (inclusive)."""
+def get_date_range(start_date: date, end_date: date, reverse: bool = True) -> List[date]:
+    """
+    Generate list of dates from start to end (inclusive).
+
+    Args:
+        start_date: First date in range
+        end_date: Last date in range
+        reverse: If True, returns dates in reverse order (latest first)
+                This is preferred for backfill to get recent data first.
+    """
     dates = []
     current = start_date
     while current <= end_date:
         dates.append(current)
         current += timedelta(days=1)
+
+    if reverse:
+        dates.reverse()  # Latest dates first
+
     return dates
 
 
@@ -204,11 +216,12 @@ def run_backfill(
     Returns:
         Summary statistics
     """
-    dates = get_date_range(start_date, end_date)
+    # Get dates in reverse order (latest first) - more valuable data first
+    dates = get_date_range(start_date, end_date, reverse=True)
     total_requests = len(dates) * len(marketplaces)
 
     print("\n" + "=" * 60)
-    print("📊 SP-API Historical Backfill")
+    print("📊 SP-API Historical Backfill (Latest First)")
     print("=" * 60)
     print(f"📅 Date range: {start_date} to {end_date} ({len(dates)} days)")
     print(f"🌎 Marketplaces: {', '.join(marketplaces)}")

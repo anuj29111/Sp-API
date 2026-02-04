@@ -1,0 +1,122 @@
+name: Historical Backfill
+
+on:
+  # Manual trigger only
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Backfill mode'
+        type: choice
+        options:
+          - 'test'      # Last 7 days only (for testing)
+          - 'month'     # Last 30 days
+          - 'quarter'   # Last 90 days
+          - 'year'      # Last 365 days
+          - 'full'      # Full 2 years
+        default: 'test'
+      marketplace:
+        description: 'Specific marketplace (e.g., USA). Leave empty for all NA'
+        required: false
+      start_date:
+        description: 'Custom start date (YYYY-MM-DD). Overrides mode.'
+        required: false
+      end_date:
+        description: 'Custom end date (YYYY-MM-DD). Defaults to 2 days ago.'
+        required: false
+      force:
+        description: 'Force re-pull existing data'
+        type: boolean
+        default: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    # Set timeout based on mode - max 6 hours per job (GitHub limit)
+    # For full backfill, we'll need to run multiple jobs
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Calculate date range
+        id: dates
+        run: |
+          END_DATE="${{ github.event.inputs.end_date }}"
+          if [ -z "$END_DATE" ]; then
+            END_DATE=$(date -d '2 days ago' +%Y-%m-%d)
+          fi
+          echo "end_date=$END_DATE" >> $GITHUB_OUTPUT
+
+          # Calculate start date based on mode
+          MODE="${{ github.event.inputs.mode }}"
+          START_DATE="${{ github.event.inputs.start_date }}"
+
+          if [ -n "$START_DATE" ]; then
+            echo "start_date=$START_DATE" >> $GITHUB_OUTPUT
+          else
+            case $MODE in
+              test)
+                START_DATE=$(date -d "$END_DATE - 6 days" +%Y-%m-%d)
+                ;;
+              month)
+                START_DATE=$(date -d "$END_DATE - 29 days" +%Y-%m-%d)
+                ;;
+              quarter)
+                START_DATE=$(date -d "$END_DATE - 89 days" +%Y-%m-%d)
+                ;;
+              year)
+                START_DATE=$(date -d "$END_DATE - 364 days" +%Y-%m-%d)
+                ;;
+              full)
+                START_DATE=$(date -d "$END_DATE - 729 days" +%Y-%m-%d)
+                ;;
+            esac
+            echo "start_date=$START_DATE" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Mode: $MODE"
+          echo "Date range: $START_DATE to $END_DATE"
+
+      - name: Run backfill
+        env:
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+          SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          CMD="python scripts/backfill_historical.py"
+          CMD="$CMD --start-date ${{ steps.dates.outputs.start_date }}"
+          CMD="$CMD --end-date ${{ steps.dates.outputs.end_date }}"
+
+          if [ -n "${{ github.event.inputs.marketplace }}" ]; then
+            CMD="$CMD --marketplace ${{ github.event.inputs.marketplace }}"
+          fi
+
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            CMD="$CMD --force"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
+
+      - name: Post summary
+        if: always()
+        run: |
+          echo "## Historical Backfill Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Mode:** ${{ github.event.inputs.mode }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Date Range:** ${{ steps.dates.outputs.start_date }} to ${{ steps.dates.outputs.end_date }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Marketplace:** ${{ github.event.inputs.marketplace || 'All NA (USA, CA, MX)' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Force:** ${{ github.event.inputs.force }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
