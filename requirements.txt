@@ -1,0 +1,10 @@
+# SP-API Data Pull Dependencies
+
+# HTTP requests
+requests>=2.31.0
+
+# Supabase client
+supabase>=2.0.0
+
+# Environment variable loading (for local development)
+python-dotenv>=1.0.0
