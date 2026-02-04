@@ -39,18 +39,25 @@ Amazon SP-API → GitHub Actions (2 AM UTC daily) → Supabase → Web App
 | **Refresh Script** | ✅ `scripts/refresh_recent.py` (late attribution refresh) |
 | **Weekly View** | ✅ `sp_weekly_asin_data` (ISO weeks Mon-Sun) |
 | **Rolling Metrics View** | ✅ `sp_rolling_asin_metrics` (7/14/30/60 days) |
-| **Test Backfill (7 days)** | 🔄 Running (workflow ID: 21674815193) |
-| Historical Backfill (Full) | ⏳ After test passes, run `mode=full` |
+| **Test Backfill (7 days)** | ✅ Passed (workflow 21674815193, 25 min) |
+| **Full Backfill (2 years)** | 🔄 Running (workflow 21676122116, ~40 hours) |
 | EU Authorization | ⏸️ Pending |
 | FE Authorization | ⏸️ Pending |
 
 ### Data in Database (as of Feb 4, 2026)
-| Date | Marketplace | ASINs | Units | Sales |
-|------|-------------|-------|-------|-------|
-| 2026-02-02 | USA | 207 | 785 | $15,510.90 |
-| 2026-02-02 | CA | 138 | 302 | $6,924.86 CAD |
-| 2026-02-02 | MX | 1 | 0 | $0.00 MXN |
-| 2026-01-30 | USA | 204 | 759 | $14,689.57 |
+**7 days of data after test backfill:**
+
+| Date | USA | CA | MX |
+|------|-----|----|----|
+| 2026-02-02 | $15,511 (785 units) | $6,925 CAD (302 units) | $0 MXN |
+| 2026-02-01 | $13,264 (681 units) | $4,784 CAD (210 units) | $500 MXN |
+| 2026-01-31 | $11,657 (585 units) | $4,649 CAD (200 units) | $496 MXN |
+| 2026-01-30 | $14,690 (759 units) | $5,731 CAD (230 units) | $0 MXN |
+| 2026-01-29 | $14,799 (734 units) | $5,702 CAD (246 units) | $750 MXN |
+| 2026-01-28 | $12,829 (662 units) | $7,010 CAD (302 units) | $250 MXN |
+| 2026-01-27 | $15,318 (814 units) | $5,346 CAD (231 units) | $0 MXN |
+
+**Full backfill in progress** - will have 730 days (2 years) when complete.
 
 ---
 
@@ -251,11 +258,21 @@ gh run view <run_id> --log | tail -50
 4. Updated `daily-pull.yml` to support modes (daily/refresh/both)
 5. Created `historical-backfill.yml` workflow with multiple modes
 6. Modified backfill to process dates in reverse order (latest first)
-7. Started test backfill (7 days) - running as workflow 21674815193
+7. ✅ Test backfill (7 days) completed successfully in 25 minutes
+8. 🔄 Started full 2-year backfill (workflow 21676122116)
 
-**Next Steps:**
-1. Verify test backfill completes successfully
-2. Run full 2-year backfill: `gh workflow run historical-backfill.yml -f mode=full`
+**Full Backfill Status:**
+- Workflow ID: `21676122116`
+- Started: Feb 4, 2026 ~2:51 PM UTC
+- Mode: Full (730 days × 3 marketplaces = 2,190 requests)
+- Estimated completion: ~40 hours
+- Order: Latest dates first (recent data available first)
+
+**Check progress:**
+```bash
+gh run view 21676122116
+gh run view 21676122116 --log | tail -50
+```
 
 ### Feb 4, 2026 (Session 2) - Backfill & Aggregation ✅
 **Completed:**
@@ -280,9 +297,16 @@ gh run view <run_id> --log | tail -50
 
 ## Next Session Checklist
 
-1. **Check test backfill result**: `gh run view 21674815193`
-2. **If passed, run full backfill**: `gh workflow run historical-backfill.yml -f mode=full`
-3. **Verify data in Supabase**: Check date range coverage
+1. **Check full backfill progress**: `gh run view 21676122116`
+2. **Verify data coverage in Supabase**:
+   ```sql
+   SELECT MIN(date), MAX(date), COUNT(DISTINCT date) as days_covered
+   FROM sp_daily_asin_data;
+   ```
+3. **If backfill failed/timed out**: Re-run with `--force` to skip existing dates
+   ```bash
+   gh workflow run historical-backfill.yml -f mode=full
+   ```
 4. **Phase 2 (Future)**: Inventory reports (FBA, AWD, Inventory Age, Storage Costs)
 
 ---
