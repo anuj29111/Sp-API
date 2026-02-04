@@ -33,42 +33,60 @@ Amazon SP-API → GitHub Actions (2 AM UTC daily) → Supabase → Web App
 | GitHub Secrets | ✅ Configured |
 | NA Authorization | ✅ Working (USA, CA, MX) |
 | Daily Pull (Automated) | ✅ Running at 2 AM UTC |
-| **First Successful Pull** | ✅ Feb 4, 2026 - 346 ASINs pulled |
-| **Backfill Script** | ✅ Created - `scripts/backfill_historical.py` |
-| **Weekly View** | ✅ Created - `sp_weekly_asin_data` (ISO weeks) |
-| **Rolling Metrics** | ✅ Created - `sp_rolling_asin_metrics` view |
-| Historical Backfill Run | 🔄 Ready to run (2 years, ~36 hours) |
+| **Daily Pull + Late Attribution Refresh** | ✅ `daily-pull.yml` (pulls new day + refreshes last 14 days) |
+| **Backfill Script** | ✅ `scripts/backfill_historical.py` |
+| **Backfill Workflow** | ✅ `historical-backfill.yml` (test/month/quarter/year/full modes) |
+| **Refresh Script** | ✅ `scripts/refresh_recent.py` (late attribution refresh) |
+| **Weekly View** | ✅ `sp_weekly_asin_data` (ISO weeks Mon-Sun) |
+| **Rolling Metrics View** | ✅ `sp_rolling_asin_metrics` (7/14/30/60 days) |
+| **Test Backfill (7 days)** | 🔄 Running (workflow ID: 21674815193) |
+| Historical Backfill (Full) | ⏳ After test passes, run `mode=full` |
 | EU Authorization | ⏸️ Pending |
 | FE Authorization | ⏸️ Pending |
 
-### First Pull Results (Feb 4, 2026)
-| Marketplace | ASINs | Units | Sales |
-|-------------|-------|-------|-------|
-| USA | 207 | 785 | $15,510.90 |
-| CA | 138 | 302 | $6,924.86 |
-| MX | 1 | 0 | $0.00 |
+### Data in Database (as of Feb 4, 2026)
+| Date | Marketplace | ASINs | Units | Sales |
+|------|-------------|-------|-------|-------|
+| 2026-02-02 | USA | 207 | 785 | $15,510.90 |
+| 2026-02-02 | CA | 138 | 302 | $6,924.86 CAD |
+| 2026-02-02 | MX | 1 | 0 | $0.00 MXN |
+| 2026-01-30 | USA | 204 | 759 | $14,689.57 |
 
 ---
 
-## Pending Items
+## GitHub Actions Workflows
 
-### 1. Run Historical Backfill (Ready)
-- **Script**: `scripts/backfill_historical.py`
-- **Duration**: ~36 hours for full 2 years
-- **Command**: `python scripts/backfill_historical.py` (full 2 years)
-- **Resume**: `python scripts/backfill_historical.py --resume`
-- **Dry run**: `python scripts/backfill_historical.py --dry-run`
+### 1. Daily Pull (`daily-pull.yml`)
+- **Schedule**: 2 AM UTC daily
+- **Modes**: `daily`, `refresh`, `both` (default)
+- **Default behavior**: Pulls new day + refreshes last 14 days for late attribution
 
-### 2. EU/FE Region Expansion
-- Authorize app in EU Seller Central (UK, DE, FR, IT, ES, UAE)
-- Authorize app in FE Seller Central (AU, JP)
-- Add `SP_REFRESH_TOKEN_EU` and `SP_REFRESH_TOKEN_FE` secrets
+```bash
+# Manual trigger examples
+gh workflow run daily-pull.yml                         # Default: both modes
+gh workflow run daily-pull.yml -f mode=daily           # Just new day
+gh workflow run daily-pull.yml -f mode=refresh         # Just refresh last 14 days
+gh workflow run daily-pull.yml -f date=2026-01-30 -f marketplace=USA
+```
 
-### 3. Phase 2: Inventory (Future)
-- Add FBA inventory report: `GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA`
-- Add AWD inventory report: `GET_AFN_INVENTORY_DATA`
-- Add inventory age report: `GET_FBA_INVENTORY_AGED_DATA`
-- Add storage costs report: `GET_FBA_STORAGE_FEE_CHARGES_DATA`
+### 2. Historical Backfill (`historical-backfill.yml`)
+- **Modes**: `test` (7 days), `month` (30), `quarter` (90), `year` (365), `full` (730)
+- **Order**: Latest dates first (reverse chronological)
+- **Timeout**: 6 hours per job
+
+```bash
+# Test first (7 days)
+gh workflow run historical-backfill.yml -f mode=test
+
+# Full 2-year backfill (~36+ hours)
+gh workflow run historical-backfill.yml -f mode=full
+
+# Custom date range
+gh workflow run historical-backfill.yml -f start_date=2024-01-01 -f end_date=2024-12-31
+
+# Single marketplace
+gh workflow run historical-backfill.yml -f mode=full -f marketplace=USA
+```
 
 ---
 
@@ -78,14 +96,16 @@ Amazon SP-API → GitHub Actions (2 AM UTC daily) → Supabase → Web App
 /Sp-API/
 ├── scripts/
 │   ├── pull_daily_sales.py     # Main daily pull script
-│   ├── backfill_historical.py  # Historical backfill (2 years)
+│   ├── backfill_historical.py  # Historical backfill (2 years, latest first)
+│   ├── refresh_recent.py       # Late attribution refresh (last N days)
 │   └── utils/
 │       ├── __init__.py
 │       ├── auth.py             # SP-API token refresh
 │       ├── reports.py          # Report API helpers
-│       └── db.py               # Supabase operations
+│       └── db.py               # Supabase operations (upsert support)
 ├── .github/workflows/
-│   └── daily-pull.yml          # Cron: 2 AM UTC daily
+│   ├── daily-pull.yml          # Cron: 2 AM UTC daily + refresh
+│   └── historical-backfill.yml # Manual: historical data backfill
 ├── Business Excel/
 │   └── Business Amazon -2025.xlsx  # GorillaROI reference
 ├── requirements.txt            # requests, supabase, python-dotenv
@@ -97,15 +117,15 @@ Amazon SP-API → GitHub Actions (2 AM UTC daily) → Supabase → Web App
 
 ---
 
-## Database Tables
+## Database Tables & Views
 
-All tables in Supabase project `yawaopfqkkvdqtsagmng` with `sp_` prefix:
+All in Supabase project `yawaopfqkkvdqtsagmng` with `sp_` prefix:
 
 | Table/View | Purpose |
-|-------|---------|
+|------------|---------|
 | `sp_daily_asin_data` | Per-ASIN daily sales & traffic metrics |
 | `sp_daily_totals` | Account-level daily totals per marketplace |
-| `sp_api_pulls` | Track pull status for debugging |
+| `sp_api_pulls` | Track pull status (supports upsert for re-pulls) |
 | `sp_monthly_asin_data` | **View** - Monthly aggregates by ASIN |
 | `sp_weekly_asin_data` | **View** - Weekly aggregates (ISO weeks Mon-Sun) |
 | `sp_rolling_asin_metrics` | **View** - Rolling 7/14/30/60 day metrics |
@@ -115,6 +135,7 @@ All tables in Supabase project `yawaopfqkkvdqtsagmng` with `sp_` prefix:
 - Sales: `units_ordered`, `ordered_product_sales`, `currency_code`
 - Traffic: `sessions`, `page_views`, `buy_box_percentage`, `unit_session_percentage`
 - B2B variants of all metrics
+- Note: `unit_session_percentage` can exceed 100% (multiple units per session)
 
 ### Database Functions
 - `get_asin_rolling_metrics(asin, marketplace_id, days, end_date)` - Get rolling metrics for any period
@@ -134,43 +155,6 @@ All tables in Supabase project `yawaopfqkkvdqtsagmng` with `sp_` prefix:
 
 ---
 
-## Running the Script
-
-### Manual Run (Local)
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Copy and fill environment variables
-cp .env.example .env
-
-# Pull yesterday's data for all NA marketplaces
-python scripts/pull_daily_sales.py
-
-# Pull specific date
-python scripts/pull_daily_sales.py --date 2026-02-01
-
-# Pull specific marketplace
-python scripts/pull_daily_sales.py --marketplace USA
-
-# Force re-pull (overwrite existing)
-python scripts/pull_daily_sales.py --force
-```
-
-### GitHub Actions (Automatic)
-- Runs daily at 2 AM UTC
-- Pulls data from 2 days ago (Amazon data delay)
-- Can trigger manually from Actions tab
-
-### Manual GitHub Actions Trigger
-```bash
-gh workflow run daily-pull.yml
-gh run list --limit 3
-gh run watch <run_id>
-```
-
----
-
 ## Marketplaces
 
 ### Currently Authorized (NA Region)
@@ -186,29 +170,25 @@ gh run watch <run_id>
 
 ---
 
-## SP-API Reference
+## Rate Limits & Timing
 
-### Regional Endpoints
-| Region | Endpoint |
-|--------|----------|
-| North America | `sellingpartnerapi-na.amazon.com` |
-| Europe | `sellingpartnerapi-eu.amazon.com` |
-| Far East | `sellingpartnerapi-fe.amazon.com` |
+| Operation | Limit | Notes |
+|-----------|-------|-------|
+| createReport | ~1/min | 65 second wait between requests |
+| getReport | 2/sec | Used for polling |
+| getReportDocument | ~1/min | Download rate limited |
+| Batch pause | 2 min | Every 30 requests |
+| Amazon data delay | 2 days | Data available ~34 hours after day ends |
+| Late attribution | 14 days | Amazon may update data for up to 14 days |
 
-### Report Type
-`GET_SALES_AND_TRAFFIC_REPORT` with options:
-- `dateGranularity`: DAY
-- `asinGranularity`: CHILD
-
-### Key Constraint
-Per-ASIN data aggregates across date range. **Solution**: Request single-day reports (same start/end date).
-
-### Rate Limits
-| Operation | Limit |
-|-----------|-------|
-| createReport | ~1/min |
-| getReport | 2/sec |
-| getReportDocument | ~1/min |
+### Backfill Timing Estimates
+| Mode | Days | Requests | Time |
+|------|------|----------|------|
+| test | 7 | 21 | ~25 min |
+| month | 30 | 90 | ~2 hours |
+| quarter | 90 | 270 | ~5 hours |
+| year | 365 | 1,095 | ~20 hours |
+| full | 730 | 2,190 | ~40 hours |
 
 ---
 
@@ -221,106 +201,70 @@ ORDER BY started_at DESC
 LIMIT 10;
 ```
 
-### Check Data
-```sql
-SELECT date, marketplace_id, COUNT(*) as asin_count,
-       SUM(units_ordered) as total_units
-FROM sp_daily_asin_data
-GROUP BY date, marketplace_id
-ORDER BY date DESC;
-```
-
-### Check Totals
-```sql
-SELECT * FROM sp_daily_totals
-ORDER BY date DESC
-LIMIT 20;
-```
-
-### Check with Marketplace Names
+### Check Data by Date
 ```sql
 SELECT
   date,
   m.code as marketplace,
   COUNT(*) as asin_count,
   SUM(units_ordered) as total_units,
-  SUM(ordered_product_sales) as total_sales
+  ROUND(SUM(ordered_product_sales)::numeric, 2) as total_sales
 FROM sp_daily_asin_data d
 JOIN marketplaces m ON d.marketplace_id = m.id
 GROUP BY date, m.code
 ORDER BY date DESC, m.code;
 ```
 
----
-
-## Data Available
-
-**From SP-API (this project):**
-- Units ordered (total)
-- Revenue (total)
-- Sessions & page views
-- Buy Box percentage
-- Conversion rate (unit_session_percentage)
-- B2B variants of all metrics
-
-**From POP System (existing):**
-- PPC-attributed sales
-- Ad spend
-
-**Now calculable:**
-- Organic Sales = Total - PPC
-- True TACOS = Ad Spend / Total Sales
-
----
-
-## Running Historical Backfill
-
-### Commands
+### Check Workflow Status
 ```bash
-# Full 2-year backfill (recommended: run in tmux/screen)
-python scripts/backfill_historical.py
-
-# Dry run - see what would be pulled
-python scripts/backfill_historical.py --dry-run
-
-# Custom date range
-python scripts/backfill_historical.py --start-date 2024-01-01 --end-date 2024-12-31
-
-# Single marketplace
-python scripts/backfill_historical.py --marketplace USA
-
-# Resume from last successful date
-python scripts/backfill_historical.py --resume
-
-# Force re-pull existing dates
-python scripts/backfill_historical.py --force
+gh run list --workflow=historical-backfill.yml --limit 5
+gh run view <run_id> --log | tail -50
 ```
 
-### Features
-- **Rate limiting**: Waits 65 seconds between requests (Amazon limit ~1/min)
-- **Batch pauses**: Extra 2-minute pause every 30 requests
-- **Resume capability**: Saves state to `.backfill_state.json`
-- **Skip existing**: Automatically skips dates with existing data
+---
 
-### Estimated Time
-- Full 2 years × 3 marketplaces = ~36 hours
-- Run overnight or in background with `nohup` or `tmux`
+## Known Issues & Fixes Applied
+
+### 1. Numeric Column Overflow (Fixed)
+- **Issue**: `unit_session_percentage` can exceed 100% (e.g., 3 units in 1 session = 300%)
+- **Fix**: Changed NUMERIC(5,2) to NUMERIC(7,2) for percentage columns
+- **Migration**: `fix_numeric_precision_for_percentage_columns`
+
+### 2. Duplicate Pull Records (Fixed)
+- **Issue**: Re-pulling same date/marketplace caused unique constraint violation
+- **Fix**: Changed `create_pull_record()` to use upsert instead of insert
+- **File**: `scripts/utils/db.py`
+
+### 3. Views Depend on Column Types (Fixed)
+- **Issue**: Can't alter column types when views depend on them
+- **Fix**: Drop views → alter columns → recreate views (in single migration)
 
 ---
 
 ## Session Log
 
+### Feb 4, 2026 (Session 3) - Backfill Workflow & Fixes ✅
+**Completed:**
+1. Fixed numeric column precision for percentage fields (can exceed 100%)
+2. Fixed pull record to use upsert for re-pulls
+3. Created `scripts/refresh_recent.py` for late attribution refresh
+4. Updated `daily-pull.yml` to support modes (daily/refresh/both)
+5. Created `historical-backfill.yml` workflow with multiple modes
+6. Modified backfill to process dates in reverse order (latest first)
+7. Started test backfill (7 days) - running as workflow 21674815193
+
+**Next Steps:**
+1. Verify test backfill completes successfully
+2. Run full 2-year backfill: `gh workflow run historical-backfill.yml -f mode=full`
+
 ### Feb 4, 2026 (Session 2) - Backfill & Aggregation ✅
 **Completed:**
 1. Analyzed GorillaROI Business Excel structure (400+ columns)
-2. Mapped Excel columns to SP-API data sources
+2. Mapped Excel columns to SP-API data sources (~70% replicable)
 3. Created historical backfill script (`scripts/backfill_historical.py`)
 4. Created weekly aggregation view (`sp_weekly_asin_data`) - ISO weeks
 5. Created rolling metrics view (`sp_rolling_asin_metrics`)
 6. Created helper functions for custom period queries
-
-**Ready to Run:**
-- Historical backfill (2 years, ~36 hours)
 
 ### Feb 4, 2026 (Session 1) - Initial Implementation ✅
 **Completed:**
@@ -331,6 +275,15 @@ python scripts/backfill_historical.py --force
 5. Configured all 5 GitHub Secrets
 6. Ran first successful pull - 346 ASINs from 3 NA marketplaces
 7. Verified data in Supabase
+
+---
+
+## Next Session Checklist
+
+1. **Check test backfill result**: `gh run view 21674815193`
+2. **If passed, run full backfill**: `gh workflow run historical-backfill.yml -f mode=full`
+3. **Verify data in Supabase**: Check date range coverage
+4. **Phase 2 (Future)**: Inventory reports (FBA, AWD, Inventory Age, Storage Costs)
 
 ---
 
