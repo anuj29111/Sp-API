@@ -221,15 +221,32 @@ def run_backfill(
 
     if dry_run:
         print("\n🏃 DRY RUN - No data will be pulled")
-        # Show what would be pulled
+        # Show what would be pulled (skip DB check in dry run if not available)
         to_pull = []
-        for d in dates:
-            for mp in marketplaces:
-                if skip_existing and check_existing_data(mp, d):
-                    continue
-                to_pull.append((d, mp))
+        skipped_count = 0
+
+        try:
+            # Try to check existing data if DB is available
+            for d in dates:
+                for mp in marketplaces:
+                    if skip_existing and check_existing_data(mp, d):
+                        skipped_count += 1
+                        continue
+                    to_pull.append((d, mp))
+        except Exception as e:
+            # DB not available - show all as "would pull"
+            print(f"⚠️  Cannot check existing data (no DB connection): {str(e)[:50]}")
+            print(f"📝 Without skipping, would pull {total_requests} date/marketplace combinations")
+            print(f"\n📋 First 10 dates would be:")
+            for i, d in enumerate(dates[:10]):
+                for mp in marketplaces:
+                    print(f"   - {mp} {d}")
+            print(f"   ... and {total_requests - 30} more")
+            return {"dry_run": True, "would_pull": total_requests, "note": "DB not available, showing all"}
 
         print(f"📝 Would pull {len(to_pull)} date/marketplace combinations")
+        if skipped_count > 0:
+            print(f"⏭️  Would skip {skipped_count} (already exist)")
         if len(to_pull) <= 20:
             for d, mp in to_pull:
                 print(f"   - {mp} {d}")
