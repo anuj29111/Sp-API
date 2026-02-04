@@ -196,7 +196,10 @@ def poll_report_status(
             }
 
         if status in ["CANCELLED", "FATAL"]:
-            raise RuntimeError(f"Report failed with status: {status}")
+            # Include any additional error info from Amazon
+            error_info = data.get("processingEndTime", "")
+            report_type = data.get("reportType", "")
+            raise RuntimeError(f"Report failed with status: {status}. Type: {report_type}. Full response: {data}")
 
         elapsed = time.time() - start_time
         if elapsed > max_wait_seconds:
