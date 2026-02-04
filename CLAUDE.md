@@ -34,9 +34,12 @@ Amazon SP-API → GitHub Actions (2 AM UTC daily) → Supabase → Web App
 | NA Authorization | ✅ Working (USA, CA, MX) |
 | Daily Pull (Automated) | ✅ Running at 2 AM UTC |
 | **First Successful Pull** | ✅ Feb 4, 2026 - 346 ASINs pulled |
+| **Backfill Script** | ✅ Created - `scripts/backfill_historical.py` |
+| **Weekly View** | ✅ Created - `sp_weekly_asin_data` (ISO weeks) |
+| **Rolling Metrics** | ✅ Created - `sp_rolling_asin_metrics` view |
+| Historical Backfill Run | 🔄 Ready to run (2 years, ~36 hours) |
 | EU Authorization | ⏸️ Pending |
 | FE Authorization | ⏸️ Pending |
-| Historical Backfill | ⏸️ Pending (next session) |
 
 ### First Pull Results (Feb 4, 2026)
 | Marketplace | ASINs | Units | Sales |
@@ -47,24 +50,25 @@ Amazon SP-API → GitHub Actions (2 AM UTC daily) → Supabase → Web App
 
 ---
 
-## Pending Items (Next Session)
+## Pending Items
 
-### 1. Historical Backfill Strategy
-- **Maximum history**: 2 years (per Amazon SP-API limits)
-- **Approach**: Build backfill script that respects rate limits
-- **Rate limits**: ~1 report/min per marketplace
-- **Estimated time**: 730 days × 3 marketplaces = ~36 hours of processing
-- **Strategy**: Run in batches, maybe 30-60 days at a time
+### 1. Run Historical Backfill (Ready)
+- **Script**: `scripts/backfill_historical.py`
+- **Duration**: ~36 hours for full 2 years
+- **Command**: `python scripts/backfill_historical.py` (full 2 years)
+- **Resume**: `python scripts/backfill_historical.py --resume`
+- **Dry run**: `python scripts/backfill_historical.py --dry-run`
 
-### 2. Aggregation Views
-- **Monthly totals**: Create view from `sp_daily_asin_data` (already have `sp_monthly_asin_data` view)
-- **Weekly aggregates**: Add new view for weekly rollups
-- **Custom date ranges**: Once backfill complete, any date range possible
-
-### 3. EU/FE Region Expansion
+### 2. EU/FE Region Expansion
 - Authorize app in EU Seller Central (UK, DE, FR, IT, ES, UAE)
 - Authorize app in FE Seller Central (AU, JP)
 - Add `SP_REFRESH_TOKEN_EU` and `SP_REFRESH_TOKEN_FE` secrets
+
+### 3. Phase 2: Inventory (Future)
+- Add FBA inventory report: `GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA`
+- Add AWD inventory report: `GET_AFN_INVENTORY_DATA`
+- Add inventory age report: `GET_FBA_INVENTORY_AGED_DATA`
+- Add storage costs report: `GET_FBA_STORAGE_FEE_CHARGES_DATA`
 
 ---
 
@@ -74,6 +78,7 @@ Amazon SP-API → GitHub Actions (2 AM UTC daily) → Supabase → Web App
 /Sp-API/
 ├── scripts/
 │   ├── pull_daily_sales.py     # Main daily pull script
+│   ├── backfill_historical.py  # Historical backfill (2 years)
 │   └── utils/
 │       ├── __init__.py
 │       ├── auth.py             # SP-API token refresh
@@ -81,6 +86,8 @@ Amazon SP-API → GitHub Actions (2 AM UTC daily) → Supabase → Web App
 │       └── db.py               # Supabase operations
 ├── .github/workflows/
 │   └── daily-pull.yml          # Cron: 2 AM UTC daily
+├── Business Excel/
+│   └── Business Amazon -2025.xlsx  # GorillaROI reference
 ├── requirements.txt            # requests, supabase, python-dotenv
 ├── .env.example                # Environment template
 ├── .gitignore
@@ -94,18 +101,24 @@ Amazon SP-API → GitHub Actions (2 AM UTC daily) → Supabase → Web App
 
 All tables in Supabase project `yawaopfqkkvdqtsagmng` with `sp_` prefix:
 
-| Table | Purpose |
+| Table/View | Purpose |
 |-------|---------|
 | `sp_daily_asin_data` | Per-ASIN daily sales & traffic metrics |
 | `sp_daily_totals` | Account-level daily totals per marketplace |
 | `sp_api_pulls` | Track pull status for debugging |
-| `sp_monthly_asin_data` | View - monthly aggregates |
+| `sp_monthly_asin_data` | **View** - Monthly aggregates by ASIN |
+| `sp_weekly_asin_data` | **View** - Weekly aggregates (ISO weeks Mon-Sun) |
+| `sp_rolling_asin_metrics` | **View** - Rolling 7/14/30/60 day metrics |
 
 ### Key Fields in sp_daily_asin_data
 - `date`, `marketplace_id`, `child_asin` (unique constraint)
 - Sales: `units_ordered`, `ordered_product_sales`, `currency_code`
 - Traffic: `sessions`, `page_views`, `buy_box_percentage`, `unit_session_percentage`
 - B2B variants of all metrics
+
+### Database Functions
+- `get_asin_rolling_metrics(asin, marketplace_id, days, end_date)` - Get rolling metrics for any period
+- `get_marketplace_daily_totals(marketplace_id, start_date, end_date)` - Get daily totals for a marketplace
 
 ---
 
@@ -260,9 +273,56 @@ ORDER BY date DESC, m.code;
 
 ---
 
+## Running Historical Backfill
+
+### Commands
+```bash
+# Full 2-year backfill (recommended: run in tmux/screen)
+python scripts/backfill_historical.py
+
+# Dry run - see what would be pulled
+python scripts/backfill_historical.py --dry-run
+
+# Custom date range
+python scripts/backfill_historical.py --start-date 2024-01-01 --end-date 2024-12-31
+
+# Single marketplace
+python scripts/backfill_historical.py --marketplace USA
+
+# Resume from last successful date
+python scripts/backfill_historical.py --resume
+
+# Force re-pull existing dates
+python scripts/backfill_historical.py --force
+```
+
+### Features
+- **Rate limiting**: Waits 65 seconds between requests (Amazon limit ~1/min)
+- **Batch pauses**: Extra 2-minute pause every 30 requests
+- **Resume capability**: Saves state to `.backfill_state.json`
+- **Skip existing**: Automatically skips dates with existing data
+
+### Estimated Time
+- Full 2 years × 3 marketplaces = ~36 hours
+- Run overnight or in background with `nohup` or `tmux`
+
+---
+
 ## Session Log
 
-### Feb 4, 2026 - Initial Implementation ✅
+### Feb 4, 2026 (Session 2) - Backfill & Aggregation ✅
+**Completed:**
+1. Analyzed GorillaROI Business Excel structure (400+ columns)
+2. Mapped Excel columns to SP-API data sources
+3. Created historical backfill script (`scripts/backfill_historical.py`)
+4. Created weekly aggregation view (`sp_weekly_asin_data`) - ISO weeks
+5. Created rolling metrics view (`sp_rolling_asin_metrics`)
+6. Created helper functions for custom period queries
+
+**Ready to Run:**
+- Historical backfill (2 years, ~36 hours)
+
+### Feb 4, 2026 (Session 1) - Initial Implementation ✅
 **Completed:**
 1. Created GitHub repo: https://github.com/anuj29111/Sp-API
 2. Built Python scripts (auth, reports, db, main pull)
@@ -271,12 +331,6 @@ ORDER BY date DESC, m.code;
 5. Configured all 5 GitHub Secrets
 6. Ran first successful pull - 346 ASINs from 3 NA marketplaces
 7. Verified data in Supabase
-
-**Next Session Agenda:**
-- Historical backfill script (up to 2 years back)
-- Weekly aggregates view
-- Verify monthly aggregates view
-- Plan for EU/FE authorization
 
 ---
 

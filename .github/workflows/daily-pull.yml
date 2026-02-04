@@ -8,8 +8,16 @@ on:
   # Allow manual trigger
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'Pull mode'
+        type: choice
+        options:
+          - 'daily'
+          - 'refresh'
+          - 'both'
+        default: 'both'
       date:
-        description: 'Date to pull (YYYY-MM-DD, defaults to 2 days ago)'
+        description: 'Date to pull (YYYY-MM-DD, for daily mode only)'
         required: false
       marketplace:
         description: 'Specific marketplace (e.g., USA). Leave empty for all NA'
@@ -18,11 +26,15 @@ on:
         description: 'Force re-pull existing data'
         type: boolean
         default: false
+      refresh_days:
+        description: 'Days to refresh for late attribution (default: 14)'
+        required: false
+        default: '14'
 
 jobs:
   pull-sales-data:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120  # Increased for refresh job
 
     steps:
       - name: Checkout repository
@@ -37,7 +49,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Pull daily sales data
+      # Step 1: Pull new day's data (daily or both mode)
+      - name: Pull new daily data
+        if: github.event.inputs.mode != 'refresh'
         env:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
@@ -45,7 +59,6 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
-          # Build command with optional arguments
           CMD="python scripts/pull_daily_sales.py"
 
           if [ -n "${{ github.event.inputs.date }}" ]; then
@@ -63,10 +76,34 @@ jobs:
           echo "Running: $CMD"
           $CMD
 
+      # Step 2: Refresh recent data for late attribution (refresh or both mode)
+      - name: Refresh recent data (late attribution)
+        if: github.event.inputs.mode != 'daily'
+        env:
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+          SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          DAYS="${{ github.event.inputs.refresh_days }}"
+          DAYS="${DAYS:-14}"  # Default to 14 if not set
+
+          CMD="python scripts/refresh_recent.py --days $DAYS"
+
+          if [ -n "${{ github.event.inputs.marketplace }}" ]; then
+            CMD="$CMD --marketplace ${{ github.event.inputs.marketplace }}"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
+
       - name: Post summary
         if: always()
         run: |
           echo "## SP-API Daily Pull Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Mode:** ${{ github.event.inputs.mode || 'both' }}" >> $GITHUB_STEP_SUMMARY
           echo "**Date:** $(date -d '2 days ago' +%Y-%m-%d)" >> $GITHUB_STEP_SUMMARY
+          echo "**Refresh Days:** ${{ github.event.inputs.refresh_days || '14' }}" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
