@@ -242,7 +242,13 @@ def download_report(
         content = gzip.decompress(content)
 
     # Step 4: Parse TSV (inventory reports are tab-separated)
-    text = content.decode("utf-8")
+    # Amazon reports may use different encodings - try UTF-8 first, then CP1252 (Windows-1252)
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        # CP1252 is commonly used by Amazon for reports with special characters
+        text = content.decode("cp1252")
+
     reader = csv.DictReader(io.StringIO(text), delimiter='\t')
     rows = list(reader)
 
