@@ -126,21 +126,27 @@ def create_pull_record(
     import_id: Optional[str] = None
 ) -> str:
     """
-    Create an sp_api_pulls record for tracking.
+    Create or update an sp_api_pulls record for tracking.
+    Uses upsert to handle re-pulls (e.g., for late attribution refresh).
 
     Returns:
         Pull record ID (UUID string)
     """
     client = get_supabase_client()
 
-    result = client.table("sp_api_pulls").insert({
+    # Use upsert to handle re-pulls (unique constraint on pull_date + marketplace_id)
+    result = client.table("sp_api_pulls").upsert({
         "pull_date": report_date.isoformat(),
         "marketplace_id": MARKETPLACE_UUIDS[marketplace_code],
         "amazon_marketplace_id": AMAZON_MARKETPLACE_IDS[marketplace_code],
         "report_id": report_id,
         "status": "pending",
-        "import_id": import_id
-    }).execute()
+        "import_id": import_id,
+        "started_at": datetime.utcnow().isoformat(),
+        "completed_at": None,
+        "error_message": None,
+        "asin_count": None
+    }, on_conflict="pull_date,marketplace_id").execute()
 
     return result.data[0]["id"]
 
