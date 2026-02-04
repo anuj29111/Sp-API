@@ -29,25 +29,42 @@ Amazon SP-API → GitHub Actions (2 AM UTC daily) → Supabase → Web App
 | GitHub Repo | ✅ https://github.com/anuj29111/Sp-API |
 | Python Scripts | ✅ Complete |
 | GitHub Actions Workflow | ✅ Complete |
-| Database Tables | ✅ Created |
+| Database Tables | ✅ Created (with RLS) |
+| GitHub Secrets | ✅ Configured |
 | NA Authorization | ✅ Working (USA, CA, MX) |
+| Daily Pull (Automated) | ✅ Running at 2 AM UTC |
+| **First Successful Pull** | ✅ Feb 4, 2026 - 346 ASINs pulled |
 | EU Authorization | ⏸️ Pending |
 | FE Authorization | ⏸️ Pending |
-| GitHub Secrets | ⚠️ Need to add |
+| Historical Backfill | ⏸️ Pending (next session) |
+
+### First Pull Results (Feb 4, 2026)
+| Marketplace | ASINs | Units | Sales |
+|-------------|-------|-------|-------|
+| USA | 207 | 785 | $15,510.90 |
+| CA | 138 | 302 | $6,924.86 |
+| MX | 1 | 0 | $0.00 |
 
 ---
 
-## GitHub Secrets Required
+## Pending Items (Next Session)
 
-Add at: https://github.com/anuj29111/Sp-API/settings/secrets/actions
+### 1. Historical Backfill Strategy
+- **Maximum history**: 2 years (per Amazon SP-API limits)
+- **Approach**: Build backfill script that respects rate limits
+- **Rate limits**: ~1 report/min per marketplace
+- **Estimated time**: 730 days × 3 marketplaces = ~36 hours of processing
+- **Strategy**: Run in batches, maybe 30-60 days at a time
 
-| Secret | Description |
-|--------|-------------|
-| `SP_LWA_CLIENT_ID` | Login With Amazon Client ID |
-| `SP_LWA_CLIENT_SECRET` | Login With Amazon Client Secret |
-| `SP_REFRESH_TOKEN_NA` | North America refresh token |
-| `SUPABASE_URL` | `https://yawaopfqkkvdqtsagmng.supabase.co` |
-| `SUPABASE_SERVICE_KEY` | Supabase service role key |
+### 2. Aggregation Views
+- **Monthly totals**: Create view from `sp_daily_asin_data` (already have `sp_monthly_asin_data` view)
+- **Weekly aggregates**: Add new view for weekly rollups
+- **Custom date ranges**: Once backfill complete, any date range possible
+
+### 3. EU/FE Region Expansion
+- Authorize app in EU Seller Central (UK, DE, FR, IT, ES, UAE)
+- Authorize app in FE Seller Central (AU, JP)
+- Add `SP_REFRESH_TOKEN_EU` and `SP_REFRESH_TOKEN_FE` secrets
 
 ---
 
@@ -56,7 +73,7 @@ Add at: https://github.com/anuj29111/Sp-API/settings/secrets/actions
 ```
 /Sp-API/
 ├── scripts/
-│   ├── pull_daily_sales.py     # Main script
+│   ├── pull_daily_sales.py     # Main daily pull script
 │   └── utils/
 │       ├── __init__.py
 │       ├── auth.py             # SP-API token refresh
@@ -92,6 +109,18 @@ All tables in Supabase project `yawaopfqkkvdqtsagmng` with `sp_` prefix:
 
 ---
 
+## GitHub Secrets (Configured)
+
+| Secret | Status |
+|--------|--------|
+| `SP_LWA_CLIENT_ID` | ✅ |
+| `SP_LWA_CLIENT_SECRET` | ✅ |
+| `SP_REFRESH_TOKEN_NA` | ✅ |
+| `SUPABASE_URL` | ✅ |
+| `SUPABASE_SERVICE_KEY` | ✅ |
+
+---
+
 ## Running the Script
 
 ### Manual Run (Local)
@@ -120,6 +149,13 @@ python scripts/pull_daily_sales.py --force
 - Pulls data from 2 days ago (Amazon data delay)
 - Can trigger manually from Actions tab
 
+### Manual GitHub Actions Trigger
+```bash
+gh workflow run daily-pull.yml
+gh run list --limit 3
+gh run watch <run_id>
+```
+
 ---
 
 ## Marketplaces
@@ -131,11 +167,9 @@ python scripts/pull_daily_sales.py --force
 | Canada | CA | A2EUQ1WTGCTBG2 | a1b2c3d4-58cc-4372-a567-0e02b2c3d480 |
 | Mexico | MX | A1AM78C64UM0Y8 | c9d0e1f2-58cc-4372-a567-0e02b2c3d488 |
 
-### Pending Authorization (EU Region)
-UK, Germany, France, Italy, Spain, UAE
-
-### Pending Authorization (FE Region)
-Australia, Japan
+### Pending Authorization
+- **EU Region**: UK, Germany, France, Italy, Spain, UAE
+- **FE Region**: Australia, Japan
 
 ---
 
@@ -156,25 +190,12 @@ Australia, Japan
 ### Key Constraint
 Per-ASIN data aggregates across date range. **Solution**: Request single-day reports (same start/end date).
 
----
-
-## Data Available
-
-From SP-API (this project):
-- Units ordered (total)
-- Revenue (total)
-- Sessions & page views
-- Buy Box percentage
-- Conversion rate (unit_session_percentage)
-- B2B variants of all metrics
-
-From POP System (existing):
-- PPC-attributed sales
-- Ad spend
-
-**Now calculable:**
-- Organic Sales = Total - PPC
-- True TACOS = Ad Spend / Total Sales
+### Rate Limits
+| Operation | Limit |
+|-----------|-------|
+| createReport | ~1/min |
+| getReport | 2/sec |
+| getReportDocument | ~1/min |
 
 ---
 
@@ -203,25 +224,59 @@ ORDER BY date DESC
 LIMIT 20;
 ```
 
+### Check with Marketplace Names
+```sql
+SELECT
+  date,
+  m.code as marketplace,
+  COUNT(*) as asin_count,
+  SUM(units_ordered) as total_units,
+  SUM(ordered_product_sales) as total_sales
+FROM sp_daily_asin_data d
+JOIN marketplaces m ON d.marketplace_id = m.id
+GROUP BY date, m.code
+ORDER BY date DESC, m.code;
+```
+
 ---
 
-## Rate Limits
+## Data Available
 
-| Operation | Limit |
-|-----------|-------|
-| createReport | ~1/min |
-| getReport | 2/sec |
-| getReportDocument | ~1/min |
+**From SP-API (this project):**
+- Units ordered (total)
+- Revenue (total)
+- Sessions & page views
+- Buy Box percentage
+- Conversion rate (unit_session_percentage)
+- B2B variants of all metrics
 
-For 3 NA marketplaces: ~10-15 minutes per daily run.
+**From POP System (existing):**
+- PPC-attributed sales
+- Ad spend
+
+**Now calculable:**
+- Organic Sales = Total - PPC
+- True TACOS = Ad Spend / Total Sales
 
 ---
 
-## Future Work
+## Session Log
 
-1. **EU/FE Authorization** - Authorize app in EU and FE Seller Central
-2. **Historical Backfill** - Pull up to 2 years of data (separate script)
-3. **Brand Analytics SQP** - Search Query Performance reports
+### Feb 4, 2026 - Initial Implementation ✅
+**Completed:**
+1. Created GitHub repo: https://github.com/anuj29111/Sp-API
+2. Built Python scripts (auth, reports, db, main pull)
+3. Set up GitHub Actions workflow (2 AM UTC daily cron)
+4. Created Supabase tables with RLS enabled
+5. Configured all 5 GitHub Secrets
+6. Ran first successful pull - 346 ASINs from 3 NA marketplaces
+7. Verified data in Supabase
+
+**Next Session Agenda:**
+- Historical backfill script (up to 2 years back)
+- Weekly aggregates view
+- Verify monthly aggregates view
+- Plan for EU/FE authorization
 
 ---
 
