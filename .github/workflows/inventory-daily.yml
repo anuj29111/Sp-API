@@ -15,10 +15,11 @@ on:
         required: false
         type: choice
         options:
-          - both
+          - all
           - inventory
+          - awd
           - age
-        default: both
+        default: all
       dry_run:
         description: 'Dry run (no DB writes)'
         required: false
@@ -44,7 +45,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Pull FBA Inventory
-        if: ${{ github.event.inputs.report_type == 'both' || github.event.inputs.report_type == 'inventory' || github.event_name == 'schedule' }}
+        if: ${{ github.event.inputs.report_type == 'all' || github.event.inputs.report_type == 'inventory' || github.event_name == 'schedule' }}
         env:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
@@ -62,12 +63,32 @@ jobs:
           fi
           python pull_inventory.py $ARGS
 
-      - name: Wait between reports
-        if: ${{ github.event.inputs.report_type == 'both' || github.event_name == 'schedule' }}
+      - name: Wait before AWD
+        if: ${{ github.event.inputs.report_type == 'all' || github.event_name == 'schedule' }}
+        run: sleep 10
+
+      - name: Pull AWD Inventory
+        if: ${{ github.event.inputs.report_type == 'all' || github.event.inputs.report_type == 'awd' || github.event_name == 'schedule' }}
+        env:
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+          SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          cd scripts
+          ARGS=""
+          if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          python pull_awd_inventory.py $ARGS
+
+      - name: Wait before Inventory Age
+        if: ${{ github.event.inputs.report_type == 'all' || github.event_name == 'schedule' }}
         run: sleep 120
 
       - name: Pull Inventory Age
-        if: ${{ github.event.inputs.report_type == 'both' || github.event.inputs.report_type == 'age' || github.event_name == 'schedule' }}
+        if: ${{ github.event.inputs.report_type == 'all' || github.event.inputs.report_type == 'age' || github.event_name == 'schedule' }}
         env:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
