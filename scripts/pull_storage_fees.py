@@ -125,16 +125,18 @@ def upsert_storage_fees(
         return 0
 
     # Transform to database format
-    # Note: Amazon report uses underscores in field names (e.g., product_name, not product-name)
+    # Note: Amazon storage fees report uses FNSKU (not SKU) to identify items
+    # Each row is per FNSKU per fulfillment center
     db_rows = []
     for row in rows:
         db_row = {
             "month": month.isoformat(),
             "marketplace_id": marketplace_id,
-            "sku": row.get("sku", ""),
+            "sku": row.get("sku"),  # May be empty - storage fees report doesn't always include SKU
             "asin": row.get("asin"),
             "fnsku": row.get("fnsku"),
             "product_name": row.get("product_name"),
+            "fulfillment_center": row.get("fulfillment_center", "").strip("'"),  # Remove quotes from FC code
 
             # Fee data
             "storage_type": row.get("dangerous_goods_storage_type", row.get("storage_type")),
@@ -147,8 +149,8 @@ def upsert_storage_fees(
             "import_id": import_id
         }
 
-        # Skip rows without SKU
-        if db_row["sku"]:
+        # Skip rows without FNSKU (FNSKU is the unique identifier in storage fees)
+        if db_row["fnsku"]:
             db_rows.append(db_row)
 
     # Batch upsert
@@ -158,7 +160,7 @@ def upsert_storage_fees(
             chunk = db_rows[i:i + chunk_size]
             client.table("sp_storage_fees").upsert(
                 chunk,
-                on_conflict="month,marketplace_id,sku"
+                on_conflict="month,marketplace_id,fnsku,fulfillment_center"
             ).execute()
 
     return len(db_rows)
