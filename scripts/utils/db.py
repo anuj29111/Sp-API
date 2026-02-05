@@ -346,3 +346,118 @@ def get_existing_pull(marketplace_code: str, report_date: date) -> Optional[Dict
     if result.data:
         return result.data[0]
     return None
+
+
+# =============================================================================
+# Pull Checkpoint Functions (for sp_pull_checkpoints table)
+# =============================================================================
+
+def get_pull_checkpoint(
+    pull_type: str,
+    pull_date: date,
+    region: str = "NA"
+) -> Optional[Dict]:
+    """
+    Get checkpoint data for a pull.
+
+    Args:
+        pull_type: Type of pull ('sales_traffic', 'fba_inventory', etc.)
+        pull_date: Date being pulled
+        region: API region
+
+    Returns:
+        Checkpoint record if exists, None otherwise
+    """
+    client = get_supabase_client()
+
+    result = client.table("sp_pull_checkpoints").select("*").eq(
+        "pull_type", pull_type
+    ).eq(
+        "pull_date", pull_date.isoformat()
+    ).eq(
+        "region", region
+    ).execute()
+
+    if result.data:
+        return result.data[0]
+    return None
+
+
+def get_incomplete_checkpoints(
+    pull_type: str,
+    region: str = "NA"
+) -> List[Dict]:
+    """
+    Get all incomplete pull checkpoints for a type.
+
+    Useful for finding pulls that need to be resumed.
+
+    Args:
+        pull_type: Type of pull
+        region: API region
+
+    Returns:
+        List of incomplete checkpoint records
+    """
+    client = get_supabase_client()
+
+    result = client.table("sp_pull_checkpoints").select("*").eq(
+        "pull_type", pull_type
+    ).eq(
+        "region", region
+    ).in_(
+        "status", ["in_progress", "partial"]
+    ).order("pull_date", desc=True).execute()
+
+    return result.data
+
+
+def update_pull_checkpoint(
+    pull_type: str,
+    pull_date: date,
+    region: str = "NA",
+    status: str = None,
+    marketplace_status: Dict = None,
+    checkpoint_data: Dict = None,
+    error_count: int = None,
+    last_error: str = None,
+    total_row_count: int = None
+) -> str:
+    """
+    Update or create a pull checkpoint record.
+
+    Uses upsert to handle both create and update.
+
+    Returns:
+        Checkpoint record ID
+    """
+    client = get_supabase_client()
+
+    data = {
+        "pull_type": pull_type,
+        "pull_date": pull_date.isoformat(),
+        "region": region
+    }
+
+    if status is not None:
+        data["status"] = status
+    if marketplace_status is not None:
+        data["marketplace_status"] = marketplace_status
+    if checkpoint_data is not None:
+        data["checkpoint_data"] = checkpoint_data
+    if error_count is not None:
+        data["error_count"] = error_count
+    if last_error is not None:
+        data["last_error"] = last_error
+    if total_row_count is not None:
+        data["total_row_count"] = total_row_count
+
+    if status == "completed":
+        data["completed_at"] = datetime.utcnow().isoformat()
+
+    result = client.table("sp_pull_checkpoints").upsert(
+        data,
+        on_conflict="pull_type,pull_date,region"
+    ).execute()
+
+    return result.data[0]["id"]

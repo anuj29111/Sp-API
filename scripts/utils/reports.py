@@ -1,15 +1,26 @@
 """
 SP-API Reports Module
 Handles report creation, polling, and downloading for Sales & Traffic reports
+
+Updated to use SPAPIClient for automatic retry and rate limiting.
 """
 
 import os
 import gzip
 import json
 import time
+import logging
 import requests
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from datetime import date, datetime
+
+# Import the new API client (optional import for backward compatibility)
+try:
+    from utils.api_client import SPAPIClient
+except ImportError:
+    SPAPIClient = None
+
+logger = logging.getLogger(__name__)
 
 # Regional endpoints
 ENDPOINTS = {
@@ -41,19 +52,21 @@ def get_endpoint(region: str) -> str:
 
 
 def create_report(
-    access_token: str,
-    marketplace_code: str,
-    report_date: date,
-    region: str = "NA"
+    access_token: str = None,
+    marketplace_code: str = None,
+    report_date: date = None,
+    region: str = "NA",
+    client: "SPAPIClient" = None
 ) -> str:
     """
     Create a Sales & Traffic report request for a single day.
 
     Args:
-        access_token: Valid SP-API access token
+        access_token: Valid SP-API access token (deprecated, use client instead)
         marketplace_code: Marketplace code (e.g., 'USA', 'UK')
         report_date: The date to pull data for (single day)
         region: API region ('NA', 'EU', 'FE')
+        client: SPAPIClient instance (preferred - handles retry and rate limiting)
 
     Returns:
         Report ID string
@@ -85,40 +98,49 @@ def create_report(
         }
     }
 
-    response = requests.post(
-        url,
-        json=payload,
-        headers={
-            "x-amz-access-token": access_token,
-            "Content-Type": "application/json"
-        }
-    )
+    headers = {"Content-Type": "application/json"}
 
-    response.raise_for_status()
+    # Use client if provided (preferred), otherwise fall back to direct requests
+    if client is not None:
+        response = client.post(
+            url,
+            json=payload,
+            headers=headers,
+            api_type="reports_create"  # 1 request per minute rate limit
+        )
+    else:
+        # Backward compatibility: direct request (no retry)
+        headers["x-amz-access-token"] = access_token
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+
     data = response.json()
     report_id = data["reportId"]
 
+    logger.info(f"Created report {report_id} for {marketplace_code} on {report_date}")
     print(f"✓ Created report {report_id} for {marketplace_code} on {report_date}")
 
     return report_id
 
 
 def poll_report_status(
-    access_token: str,
-    report_id: str,
+    access_token: str = None,
+    report_id: str = None,
     region: str = "NA",
     max_wait_seconds: int = 300,
-    poll_interval: int = 10
+    poll_interval: int = 10,
+    client: "SPAPIClient" = None
 ) -> Dict[str, Any]:
     """
     Poll for report completion and return the report document ID.
 
     Args:
-        access_token: Valid SP-API access token
+        access_token: Valid SP-API access token (deprecated, use client instead)
         report_id: The report ID to poll
         region: API region ('NA', 'EU', 'FE')
         max_wait_seconds: Maximum time to wait for completion
         poll_interval: Seconds between polls
+        client: SPAPIClient instance (preferred - handles retry and rate limiting)
 
     Returns:
         Dict with 'reportDocumentId' and 'processingStatus'
@@ -133,16 +155,22 @@ def poll_report_status(
     start_time = time.time()
 
     while True:
-        response = requests.get(
-            url,
-            headers={"x-amz-access-token": access_token}
-        )
-        response.raise_for_status()
-        data = response.json()
+        # Use client if provided (preferred), otherwise fall back to direct requests
+        if client is not None:
+            response = client.get(url, api_type="reports_get")  # 2 req/sec rate limit
+        else:
+            # Backward compatibility: direct request (no retry)
+            response = requests.get(
+                url,
+                headers={"x-amz-access-token": access_token}
+            )
+            response.raise_for_status()
 
+        data = response.json()
         status = data.get("processingStatus")
 
         if status == "DONE":
+            logger.info(f"Report {report_id} completed")
             print(f"✓ Report {report_id} completed")
             return {
                 "reportDocumentId": data["reportDocumentId"],
@@ -162,17 +190,19 @@ def poll_report_status(
 
 
 def download_report(
-    access_token: str,
-    report_document_id: str,
-    region: str = "NA"
+    access_token: str = None,
+    report_document_id: str = None,
+    region: str = "NA",
+    client: "SPAPIClient" = None
 ) -> Dict[str, Any]:
     """
     Download and parse a completed report.
 
     Args:
-        access_token: Valid SP-API access token
+        access_token: Valid SP-API access token (deprecated, use client instead)
         report_document_id: The document ID from poll_report_status
         region: API region ('NA', 'EU', 'FE')
+        client: SPAPIClient instance (preferred - handles retry and rate limiting)
 
     Returns:
         Parsed report data as dictionary
@@ -185,19 +215,28 @@ def download_report(
     # Step 1: Get the pre-signed download URL
     url = f"https://{endpoint}/reports/2021-06-30/documents/{report_document_id}"
 
-    response = requests.get(
-        url,
-        headers={"x-amz-access-token": access_token}
-    )
-    response.raise_for_status()
+    if client is not None:
+        response = client.get(url, api_type="reports_get")
+    else:
+        response = requests.get(
+            url,
+            headers={"x-amz-access-token": access_token}
+        )
+        response.raise_for_status()
+
     doc_info = response.json()
 
     download_url = doc_info["url"]
     compression = doc_info.get("compressionAlgorithm")
 
-    # Step 2: Download the actual report
-    report_response = requests.get(download_url)
-    report_response.raise_for_status()
+    # Step 2: Download the actual report (S3 URL - no auth needed, but use client for retry)
+    if client is not None:
+        # Use client session for retry on download, but no SP-API auth header
+        report_response = client.session.get(download_url, timeout=client.timeout)
+        report_response.raise_for_status()
+    else:
+        report_response = requests.get(download_url)
+        report_response.raise_for_status()
 
     # Step 3: Decompress if needed
     content = report_response.content
@@ -208,36 +247,55 @@ def download_report(
     report_data = json.loads(content.decode("utf-8"))
 
     asin_count = len(report_data.get("salesAndTrafficByAsin", []))
+    logger.info(f"Downloaded report with {asin_count} ASINs")
     print(f"✓ Downloaded report with {asin_count} ASINs")
 
     return report_data
 
 
 def pull_single_day_report(
-    access_token: str,
-    marketplace_code: str,
-    report_date: date,
-    region: str = "NA"
+    access_token: str = None,
+    marketplace_code: str = None,
+    report_date: date = None,
+    region: str = "NA",
+    client: "SPAPIClient" = None
 ) -> Dict[str, Any]:
     """
     High-level function to create, poll, and download a single day's report.
 
     Args:
-        access_token: Valid SP-API access token
+        access_token: Valid SP-API access token (deprecated, use client instead)
         marketplace_code: Marketplace code (e.g., 'USA', 'UK')
         report_date: The date to pull data for
         region: API region ('NA', 'EU', 'FE')
+        client: SPAPIClient instance (preferred - handles retry and rate limiting)
 
     Returns:
         Parsed report data
     """
     # Create report
-    report_id = create_report(access_token, marketplace_code, report_date, region)
+    report_id = create_report(
+        access_token=access_token,
+        marketplace_code=marketplace_code,
+        report_date=report_date,
+        region=region,
+        client=client
+    )
 
     # Poll until complete
-    result = poll_report_status(access_token, report_id, region)
+    result = poll_report_status(
+        access_token=access_token,
+        report_id=report_id,
+        region=region,
+        client=client
+    )
 
     # Download and parse
-    report_data = download_report(access_token, result["reportDocumentId"], region)
+    report_data = download_report(
+        access_token=access_token,
+        report_document_id=result["reportDocumentId"],
+        region=region,
+        client=client
+    )
 
     return report_data

@@ -5,6 +5,11 @@ Pull FBA Inventory from SP-API using the FBA Inventory API
 This script pulls the current FBA inventory snapshot using the FBA Inventory API v1
 (getInventorySummaries endpoint), which is more reliable than the report-based approach.
 
+Features:
+- Automatic retry with exponential backoff on API failures
+- Rate limit handling via SPAPIClient
+- Slack alerts on failures (if SLACK_WEBHOOK_URL is set)
+
 Fields captured:
 - fulfillable_quantity (ready to ship)
 - reserved_quantity (pending orders/transfers)
@@ -22,6 +27,7 @@ import os
 import sys
 import argparse
 import time
+import logging
 from datetime import date, datetime
 from typing import Dict, List, Any
 
@@ -36,6 +42,17 @@ from utils.db import (
     update_data_import,
     MARKETPLACE_UUIDS
 )
+
+# Import new resilience modules
+from utils.api_client import SPAPIClient, SPAPIError
+from utils.alerting import alert_failure
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Default marketplaces to pull
 DEFAULT_MARKETPLACES = ["USA", "CA", "MX"]
@@ -137,13 +154,21 @@ def upsert_fba_inventory(
 
 
 def pull_marketplace_inventory(
-    access_token: str,
     marketplace_code: str,
     region: str = "NA",
-    dry_run: bool = False
+    dry_run: bool = False,
+    client: SPAPIClient = None,
+    access_token: str = None
 ) -> Dict[str, Any]:
     """
     Pull FBA inventory for a single marketplace.
+
+    Args:
+        marketplace_code: Marketplace code (e.g., 'USA')
+        region: API region
+        dry_run: If True, don't write to database
+        client: SPAPIClient instance (handles retry and rate limiting)
+        access_token: Access token (deprecated, use client instead)
 
     Returns:
         Dict with status information
@@ -168,8 +193,13 @@ def pull_marketplace_inventory(
         pull_id = create_inventory_pull_record(marketplace_code, report_type, import_id)
 
     try:
-        # Pull using the FBA Inventory API
-        rows = pull_fba_inventory(access_token, marketplace_code, region)
+        # Pull using the FBA Inventory API (client handles retry and rate limiting)
+        rows = pull_fba_inventory(
+            access_token=access_token,
+            marketplace_code=marketplace_code,
+            region=region,
+            client=client
+        )
 
         if dry_run:
             print(f"\n[DRY RUN] Would upsert {len(rows)} inventory records")
@@ -203,9 +233,33 @@ def pull_marketplace_inventory(
             "processing_time_ms": processing_time
         }
 
+    except SPAPIError as e:
+        error_msg = str(e)
+        logger.error(f"SP-API error for {marketplace_code}: {error_msg}")
+        print(f"\n✗ Error for {marketplace_code}: {error_msg}")
+
+        # Send alert
+        retry_count = client.stats.get("retries", 0) if client else 0
+        alert_failure("fba_inventory", marketplace_code, error_msg, retry_count)
+
+        if not dry_run and import_id:
+            update_data_import(import_id, "failed", error_message=error_msg)
+        if not dry_run and pull_id:
+            update_inventory_pull_status(pull_id, "failed", error_message=error_msg)
+
+        return {
+            "status": "failed",
+            "marketplace": marketplace_code,
+            "error": error_msg
+        }
+
     except Exception as e:
         error_msg = str(e)
+        logger.error(f"Error for {marketplace_code}: {error_msg}")
         print(f"\n✗ Error for {marketplace_code}: {error_msg}")
+
+        # Send alert
+        alert_failure("fba_inventory", marketplace_code, error_msg, 0)
 
         if not dry_run and import_id:
             update_data_import(import_id, "failed", error_message=error_msg)
@@ -254,26 +308,30 @@ def main():
     print(f"Dry run: {args.dry_run}")
     print("="*60)
 
-    # Get access token
+    # Get access token and create API client
     print("\nGetting access token...")
     access_token = get_access_token()
     print("✓ Access token obtained")
 
+    # Create SPAPIClient with retry and rate limiting
+    client = SPAPIClient(access_token, region="NA")
+
     # Process each marketplace
     results = []
     for i, marketplace in enumerate(marketplaces):
-        # Small delay between marketplaces (API is much faster than reports)
-        if i > 0:
-            print("\nWaiting 5 seconds between marketplaces...")
-            time.sleep(5)
+        # SPAPIClient handles rate limiting automatically - no fixed sleep needed
 
         result = pull_marketplace_inventory(
-            access_token,
-            marketplace,
+            marketplace_code=marketplace,
             region="NA",
-            dry_run=args.dry_run
+            dry_run=args.dry_run,
+            client=client
         )
         results.append(result)
+
+    # Log client stats
+    stats = client.get_stats()
+    logger.info(f"API stats: {stats['requests']} requests, {stats['retries']} retries")
 
     # Summary
     print("\n" + "="*60)

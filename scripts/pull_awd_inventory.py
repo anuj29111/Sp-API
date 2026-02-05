@@ -5,6 +5,11 @@ Pull AWD Inventory from SP-API using the AWD API v2024-05-09
 This script pulls the current AWD (Amazon Warehousing and Distribution) inventory.
 AWD stores inventory that gets distributed to FBA fulfillment centers.
 
+Features:
+- Automatic retry with exponential backoff on API failures
+- Rate limit handling via SPAPIClient
+- Slack alerts on failures (if SLACK_WEBHOOK_URL is set)
+
 Fields captured:
 - total_onhand_quantity (in AWD distribution centers)
 - total_inbound_quantity (in-transit to AWD)
@@ -20,6 +25,7 @@ import os
 import sys
 import argparse
 import time
+import logging
 from datetime import date, datetime
 from typing import Dict, List, Any
 
@@ -34,6 +40,17 @@ from utils.db import (
     update_data_import,
     MARKETPLACE_UUIDS
 )
+
+# Import new resilience modules
+from utils.api_client import SPAPIClient, SPAPIError
+from utils.alerting import alert_failure
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # AWD is typically only for USA marketplace
 DEFAULT_MARKETPLACE = "USA"
@@ -138,13 +155,21 @@ def upsert_awd_inventory(
 
 
 def pull_awd(
-    access_token: str,
     marketplace_code: str = "USA",
     region: str = "NA",
-    dry_run: bool = False
+    dry_run: bool = False,
+    client: SPAPIClient = None,
+    access_token: str = None
 ) -> Dict[str, Any]:
     """
     Pull AWD inventory.
+
+    Args:
+        marketplace_code: Marketplace code (typically 'USA' for AWD)
+        region: API region
+        dry_run: If True, don't write to database
+        client: SPAPIClient instance (handles retry and rate limiting)
+        access_token: Access token (deprecated, use client instead)
 
     Returns:
         Dict with status information
@@ -168,8 +193,12 @@ def pull_awd(
         pull_id = create_awd_pull_record(marketplace_code, import_id)
 
     try:
-        # Pull using the AWD API
-        rows = pull_awd_inventory(access_token, region)
+        # Pull using the AWD API (client handles retry and rate limiting)
+        rows = pull_awd_inventory(
+            access_token=access_token,
+            region=region,
+            client=client
+        )
 
         if dry_run:
             print(f"\n[DRY RUN] Would upsert {len(rows)} AWD inventory records")
@@ -203,9 +232,33 @@ def pull_awd(
             "processing_time_ms": processing_time
         }
 
+    except SPAPIError as e:
+        error_msg = str(e)
+        logger.error(f"SP-API error: {error_msg}")
+        print(f"\n✗ Error: {error_msg}")
+
+        # Send alert
+        retry_count = client.stats.get("retries", 0) if client else 0
+        alert_failure("awd_inventory", marketplace_code, error_msg, retry_count)
+
+        if not dry_run and import_id:
+            update_data_import(import_id, "failed", error_message=error_msg)
+        if not dry_run and pull_id:
+            update_awd_pull_status(pull_id, "failed", error_message=error_msg)
+
+        return {
+            "status": "failed",
+            "marketplace": marketplace_code,
+            "error": error_msg
+        }
+
     except Exception as e:
         error_msg = str(e)
+        logger.error(f"Error: {error_msg}")
         print(f"\n✗ Error: {error_msg}")
+
+        # Send alert
+        alert_failure("awd_inventory", marketplace_code, error_msg, 0)
 
         if not dry_run and import_id:
             update_data_import(import_id, "failed", error_message=error_msg)
@@ -236,18 +289,25 @@ def main():
     print(f"Dry run: {args.dry_run}")
     print("="*60)
 
-    # Get access token
+    # Get access token and create API client
     print("\nGetting access token...")
     access_token = get_access_token()
     print("✓ Access token obtained")
 
+    # Create SPAPIClient with retry and rate limiting
+    client = SPAPIClient(access_token, region="NA")
+
     # Pull AWD inventory
     result = pull_awd(
-        access_token,
         marketplace_code=DEFAULT_MARKETPLACE,
         region="NA",
-        dry_run=args.dry_run
+        dry_run=args.dry_run,
+        client=client
     )
+
+    # Log client stats
+    stats = client.get_stats()
+    logger.info(f"API stats: {stats['requests']} requests, {stats['retries']} retries")
 
     # Summary
     print("\n" + "="*60)

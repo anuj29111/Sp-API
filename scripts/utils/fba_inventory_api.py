@@ -5,12 +5,23 @@ Uses the FBA Inventory API v1 to get real-time inventory summaries.
 This is more reliable than the report-based approach (GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA)
 which has known issues with FATAL status errors.
 
+Updated to use SPAPIClient for automatic retry and rate limiting.
+
 API Reference: https://developer-docs.amazon.com/sp-api/docs/fba-inventory-api
 """
 
+import logging
 import requests
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+
+# Import the new API client (optional import for backward compatibility)
+try:
+    from utils.api_client import SPAPIClient
+except ImportError:
+    SPAPIClient = None
+
+logger = logging.getLogger(__name__)
 
 # Regional endpoints
 ENDPOINTS = {
@@ -42,23 +53,25 @@ def get_endpoint(region: str) -> str:
 
 
 def get_inventory_summaries(
-    access_token: str,
-    marketplace_code: str,
+    access_token: str = None,
+    marketplace_code: str = None,
     region: str = "NA",
     details: bool = True,
     seller_skus: Optional[List[str]] = None,
-    next_token: Optional[str] = None
+    next_token: Optional[str] = None,
+    client: "SPAPIClient" = None
 ) -> Dict[str, Any]:
     """
     Get inventory summaries from the FBA Inventory API.
 
     Args:
-        access_token: Valid SP-API access token
+        access_token: Valid SP-API access token (deprecated, use client instead)
         marketplace_code: Marketplace code (e.g., 'USA', 'CA', 'MX')
         region: API region ('NA', 'EU', 'FE')
         details: Include detailed inventory breakdown
         seller_skus: Optional list of SKUs to filter (max 50)
         next_token: Pagination token
+        client: SPAPIClient instance (preferred - handles retry and rate limiting)
 
     Returns:
         Dict with 'inventorySummaries' list and optionally 'nextToken'
@@ -85,31 +98,34 @@ def get_inventory_summaries(
     if next_token:
         params["nextToken"] = next_token
 
-    response = requests.get(
-        url,
-        params=params,
-        headers={
-            "x-amz-access-token": access_token,
-            "Content-Type": "application/json"
-        }
-    )
+    headers = {"Content-Type": "application/json"}
 
-    response.raise_for_status()
+    # Use client if provided (preferred), otherwise fall back to direct requests
+    if client is not None:
+        response = client.get(url, params=params, headers=headers, api_type="inventory")
+    else:
+        # Backward compatibility: direct request (no retry)
+        headers["x-amz-access-token"] = access_token
+        response = requests.get(url, params=params, headers=headers)
+        response.raise_for_status()
+
     return response.json()
 
 
 def get_all_inventory_summaries(
-    access_token: str,
-    marketplace_code: str,
-    region: str = "NA"
+    access_token: str = None,
+    marketplace_code: str = None,
+    region: str = "NA",
+    client: "SPAPIClient" = None
 ) -> List[Dict[str, Any]]:
     """
     Get all inventory summaries for a marketplace, handling pagination.
 
     Args:
-        access_token: Valid SP-API access token
+        access_token: Valid SP-API access token (deprecated, use client instead)
         marketplace_code: Marketplace code
         region: API region
+        client: SPAPIClient instance (preferred - handles retry and rate limiting)
 
     Returns:
         List of inventory summary dictionaries
@@ -119,14 +135,16 @@ def get_all_inventory_summaries(
     page = 1
 
     while True:
+        logger.debug(f"Fetching inventory page {page}")
         print(f"  Fetching inventory page {page}...")
 
         result = get_inventory_summaries(
-            access_token,
-            marketplace_code,
-            region,
+            access_token=access_token,
+            marketplace_code=marketplace_code,
+            region=region,
             details=True,
-            next_token=next_token
+            next_token=next_token,
+            client=client
         )
 
         payload = result.get("payload", {})
@@ -141,6 +159,7 @@ def get_all_inventory_summaries(
 
         page += 1
 
+    logger.info(f"Retrieved {len(all_summaries)} inventory summaries")
     print(f"✓ Retrieved {len(all_summaries)} inventory summaries")
     return all_summaries
 
@@ -225,23 +244,30 @@ def transform_inventory_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def pull_fba_inventory(
-    access_token: str,
-    marketplace_code: str,
-    region: str = "NA"
+    access_token: str = None,
+    marketplace_code: str = None,
+    region: str = "NA",
+    client: "SPAPIClient" = None
 ) -> List[Dict[str, Any]]:
     """
     High-level function to pull FBA inventory for a marketplace.
 
     Args:
-        access_token: Valid SP-API access token
+        access_token: Valid SP-API access token (deprecated, use client instead)
         marketplace_code: Marketplace code
         region: API region
+        client: SPAPIClient instance (preferred - handles retry and rate limiting)
 
     Returns:
         List of transformed inventory records ready for DB insertion
     """
     # Get all summaries
-    summaries = get_all_inventory_summaries(access_token, marketplace_code, region)
+    summaries = get_all_inventory_summaries(
+        access_token=access_token,
+        marketplace_code=marketplace_code,
+        region=region,
+        client=client
+    )
 
     # Transform to DB format
     records = []

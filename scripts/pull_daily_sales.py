@@ -5,11 +5,18 @@ SP-API Daily Sales & Traffic Pull Script
 This script pulls daily sales and traffic data from Amazon SP-API
 and stores it in Supabase.
 
+Features:
+- Automatic retry with exponential backoff on API failures
+- Rate limit handling via SPAPIClient
+- Checkpoint-based resume capability via PullTracker
+- Slack alerts on failures (if SLACK_WEBHOOK_URL is set)
+
 Usage:
     python pull_daily_sales.py                    # Pull yesterday's data for all NA marketplaces
     python pull_daily_sales.py --date 2026-02-01  # Pull specific date
     python pull_daily_sales.py --marketplace USA  # Pull specific marketplace only
     python pull_daily_sales.py --days-ago 2       # Pull data from 2 days ago
+    python pull_daily_sales.py --resume           # Resume incomplete pull
 
 Environment Variables Required:
     SP_LWA_CLIENT_ID      - Login With Amazon Client ID
@@ -17,12 +24,17 @@ Environment Variables Required:
     SP_REFRESH_TOKEN_NA   - North America refresh token
     SUPABASE_URL          - Supabase project URL
     SUPABASE_SERVICE_KEY  - Supabase service role key
+
+Optional Environment Variables:
+    SLACK_WEBHOOK_URL     - Slack webhook for failure alerts
+    SP_API_MAX_RETRIES    - Max retry attempts (default: 5)
 """
 
 import os
 import sys
 import argparse
 import time
+import logging
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
@@ -41,6 +53,18 @@ from scripts.utils.db import (
     get_existing_pull
 )
 
+# Import new resilience modules
+from scripts.utils.api_client import SPAPIClient, SPAPIError
+from scripts.utils.pull_tracker import PullTracker
+from scripts.utils.alerting import alert_failure, alert_partial, send_summary
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 # North America marketplaces (using same refresh token)
 NA_MARKETPLACES = ["USA", "CA", "MX"]
 
@@ -56,7 +80,9 @@ def pull_marketplace_data(
     marketplace_code: str,
     report_date: date,
     region: str = "NA",
-    skip_existing: bool = True
+    skip_existing: bool = True,
+    client: SPAPIClient = None,
+    tracker: PullTracker = None
 ) -> dict:
     """
     Pull data for a single marketplace and date.
@@ -66,6 +92,8 @@ def pull_marketplace_data(
         report_date: Date to pull data for
         region: API region ('NA', 'EU', 'FE')
         skip_existing: Skip if data already exists
+        client: SPAPIClient instance (handles retry and rate limiting)
+        tracker: PullTracker instance (handles checkpoint/resume)
 
     Returns:
         Dict with status and counts
@@ -75,10 +103,15 @@ def pull_marketplace_data(
         "date": report_date.isoformat(),
         "status": "pending",
         "asin_count": 0,
-        "error": None
+        "error": None,
+        "retryable": False
     }
 
     start_time = time.time()
+
+    # Mark marketplace as in progress in tracker
+    if tracker:
+        tracker.start_marketplace(marketplace_code)
 
     try:
         # Check if already pulled
@@ -87,6 +120,8 @@ def pull_marketplace_data(
             if existing and existing.get("status") == "completed":
                 print(f"⏭️  {marketplace_code} {report_date} already pulled, skipping")
                 result["status"] = "skipped"
+                if tracker:
+                    tracker.complete_marketplace(marketplace_code, 0)
                 return result
 
         print(f"\n{'='*50}")
@@ -97,20 +132,24 @@ def pull_marketplace_data(
         import_id = create_data_import(marketplace_code, report_date)
         pull_id = create_pull_record(marketplace_code, report_date, import_id=import_id)
 
-        # Get access token
-        print("🔑 Getting access token...")
-        access_token = get_access_token()
+        # Get access token (if no client provided)
+        if client is None:
+            print("🔑 Getting access token...")
+            access_token = get_access_token()
+        else:
+            access_token = None  # Client already has token
 
         # Update pull status to processing
         update_pull_status(pull_id, "processing")
 
-        # Pull the report
+        # Pull the report (client handles retry and rate limiting)
         print("📥 Requesting report from Amazon...")
         report_data = pull_single_day_report(
             access_token=access_token,
             marketplace_code=marketplace_code,
             report_date=report_date,
-            region=region
+            region=region,
+            client=client
         )
 
         # Store ASIN data
@@ -141,14 +180,54 @@ def pull_marketplace_data(
         result["status"] = "completed"
         result["asin_count"] = asin_count
 
+        # Mark complete in tracker
+        if tracker:
+            tracker.complete_marketplace(marketplace_code, asin_count)
+
         print(f"✅ {marketplace_code} completed: {asin_count} ASINs in {processing_time_ms}ms")
 
+    except SPAPIError as e:
+        # SP-API specific error (may be retryable)
+        error_msg = str(e)
+        result["status"] = "failed"
+        result["error"] = error_msg
+        result["retryable"] = True  # SP-API errors are generally retryable
+
+        logger.error(f"{marketplace_code} failed with SP-API error: {error_msg}")
+        print(f"❌ {marketplace_code} failed: {error_msg}")
+
+        # Send alert
+        retry_count = client.stats.get("retries", 0) if client else 0
+        alert_failure("sales_traffic", marketplace_code, error_msg, retry_count)
+
+        # Update tracker
+        if tracker:
+            tracker.fail_marketplace(marketplace_code, error_msg)
+
+        # Try to update tracking records
+        try:
+            if 'pull_id' in locals():
+                update_pull_status(pull_id, "failed", error_message=error_msg)
+            if 'import_id' in locals():
+                update_data_import(import_id, "failed", error_message=error_msg)
+        except:
+            pass
+
     except Exception as e:
+        # General error
         error_msg = str(e)
         result["status"] = "failed"
         result["error"] = error_msg
 
+        logger.error(f"{marketplace_code} failed: {error_msg}")
         print(f"❌ {marketplace_code} failed: {error_msg}")
+
+        # Send alert
+        alert_failure("sales_traffic", marketplace_code, error_msg, 0)
+
+        # Update tracker
+        if tracker:
+            tracker.fail_marketplace(marketplace_code, error_msg)
 
         # Try to update tracking records
         try:
@@ -165,7 +244,8 @@ def pull_marketplace_data(
 def pull_region_data(
     region: str,
     report_date: date,
-    skip_existing: bool = True
+    skip_existing: bool = True,
+    resume: bool = True
 ) -> List[dict]:
     """
     Pull data for all marketplaces in a region.
@@ -174,26 +254,69 @@ def pull_region_data(
         region: API region ('NA', 'EU', 'FE')
         report_date: Date to pull data for
         skip_existing: Skip if data already exists
+        resume: Resume from checkpoint if previous pull was incomplete
 
     Returns:
         List of results for each marketplace
     """
-    marketplaces = MARKETPLACES_BY_REGION.get(region.upper(), [])
+    pull_start_time = time.time()
+
+    # Get access token once for all marketplaces
+    print("🔑 Getting access token...")
+    access_token = get_access_token()
+
+    # Create SPAPIClient with retry and rate limiting
+    client = SPAPIClient(access_token, region=region)
+
+    # Create PullTracker for checkpoint/resume capability
+    tracker = PullTracker("sales_traffic", report_date, region)
+    tracker.start_pull(resume=resume)
+
+    # Get marketplaces to process (supports resume)
+    all_marketplaces = MARKETPLACES_BY_REGION.get(region.upper(), [])
+    if resume:
+        marketplaces = tracker.get_incomplete_marketplaces(all_marketplaces)
+        if len(marketplaces) < len(all_marketplaces):
+            completed = len(all_marketplaces) - len(marketplaces)
+            print(f"📋 Resuming: {completed} marketplaces already done, {len(marketplaces)} remaining")
+    else:
+        marketplaces = all_marketplaces
+
     results = []
 
     for marketplace_code in marketplaces:
-        # Rate limit: wait between marketplace pulls
-        if results:
-            print("\n⏳ Waiting 60 seconds before next marketplace (rate limit)...")
-            time.sleep(60)
+        # SPAPIClient handles rate limiting automatically - no need for fixed sleep
+        # The client will wait based on x-amzn-RateLimit-* headers
 
         result = pull_marketplace_data(
             marketplace_code=marketplace_code,
             report_date=report_date,
             region=region,
-            skip_existing=skip_existing
+            skip_existing=skip_existing,
+            client=client,
+            tracker=tracker
         )
         results.append(result)
+
+    # Finish tracking and determine final status
+    final_status = tracker.finish_pull()
+
+    # Log client stats
+    stats = client.get_stats()
+    logger.info(f"API stats: {stats['requests']} requests, {stats['retries']} retries, {stats['rate_limit_waits']} rate limit waits")
+
+    # Send summary/alerts
+    total_rows = sum(r["asin_count"] for r in results)
+    duration = time.time() - pull_start_time
+
+    completed = [r["marketplace"] for r in results if r["status"] == "completed"]
+    failed = [r["marketplace"] for r in results if r["status"] == "failed"]
+
+    if failed:
+        errors = {r["marketplace"]: r.get("error", "Unknown") for r in results if r["status"] == "failed"}
+        alert_partial("sales_traffic", report_date.isoformat(), completed, failed, errors)
+    else:
+        send_summary("sales_traffic", report_date.isoformat(), results, total_rows, duration)
 
     return results
 
@@ -230,8 +353,22 @@ def main():
         action="store_true",
         help="Force re-pull even if data exists"
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        default=True,
+        help="Resume from checkpoint if previous pull was incomplete (default: True)"
+    )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Do not resume, start fresh"
+    )
 
     args = parser.parse_args()
+
+    # Handle resume flag
+    resume = args.resume and not args.no_resume
 
     # Determine date
     if args.date:
@@ -239,25 +376,32 @@ def main():
     else:
         report_date = date.today() - timedelta(days=args.days_ago)
 
-    print(f"\n🚀 SP-API Daily Pull Script")
+    print(f"\n🚀 SP-API Daily Pull Script (with retry & rate limiting)")
     print(f"📅 Date: {report_date}")
     print(f"🌎 Region: {args.region}")
+    print(f"🔄 Resume: {resume}")
 
     # Pull data
     if args.marketplace:
-        # Single marketplace
+        # Single marketplace - create client and tracker inline
+        print("🔑 Getting access token...")
+        access_token = get_access_token()
+        client = SPAPIClient(access_token, region=args.region)
+
         results = [pull_marketplace_data(
             marketplace_code=args.marketplace.upper(),
             report_date=report_date,
             region=args.region,
-            skip_existing=not args.force
+            skip_existing=not args.force,
+            client=client
         )]
     else:
         # All marketplaces in region
         results = pull_region_data(
             region=args.region,
             report_date=report_date,
-            skip_existing=not args.force
+            skip_existing=not args.force,
+            resume=resume
         )
 
     # Summary

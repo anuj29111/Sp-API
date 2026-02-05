@@ -102,6 +102,9 @@ POP System (Advertising API) ─────────────────
 │   ├── backfill_historical.py     # 2-year backfill
 │   ├── refresh_recent.py          # Late attribution refresh
 │   └── utils/
+│       ├── api_client.py          # ✨ NEW: Centralized HTTP client with retry/rate limiting
+│       ├── pull_tracker.py        # ✨ NEW: Checkpoint & resume capability
+│       ├── alerting.py            # ✨ NEW: Slack notifications for failures
 │       ├── auth.py                # SP-API token refresh
 │       ├── reports.py             # Sales & Traffic report helpers
 │       ├── inventory_reports.py   # Inventory report helpers
@@ -115,6 +118,80 @@ POP System (Advertising API) ─────────────────
 │   └── historical-backfill.yml    # Manual - Historical data
 ├── requirements.txt
 └── CLAUDE.md
+```
+
+---
+
+## API Resilience System ✅ COMPLETE
+
+### Overview
+
+All SP-API scripts now use a centralized API client with automatic retry and rate limiting.
+
+**Key Features:**
+- Automatic retry with exponential backoff (1s → 2s → 4s → 8s → 16s)
+- Rate limit header parsing (`x-amzn-RateLimit-*`)
+- Transient error detection (429, 500, 502, 503, 504)
+- Checkpoint-based resume capability for partial failures
+- Slack alerts on failures (optional)
+
+### Core Modules
+
+| Module | Purpose |
+|--------|---------|
+| `api_client.py` | SPAPIClient class - handles all HTTP calls with retry/rate limiting |
+| `pull_tracker.py` | PullTracker class - tracks per-marketplace status, supports resume |
+| `alerting.py` | AlertManager - sends Slack notifications on failures |
+
+### Database Table
+
+**`sp_pull_checkpoints`** - Tracks pull progress with resume capability:
+- `pull_type` - Type of pull ('sales_traffic', 'fba_inventory', etc.)
+- `pull_date` - Date being pulled
+- `status` - pending/in_progress/partial/completed/failed
+- `marketplace_status` - JSONB per-marketplace status
+- `checkpoint_data` - JSONB resume data
+
+### Environment Variables
+
+```bash
+# API Client Config (optional - has defaults)
+SP_API_MAX_RETRIES=5          # Max retry attempts (default: 5)
+SP_API_BASE_DELAY=1.0         # Initial backoff delay in seconds (default: 1.0)
+SP_API_MAX_DELAY=60.0         # Max backoff delay in seconds (default: 60.0)
+SP_API_TIMEOUT=30             # Request timeout in seconds (default: 30)
+
+# Alerting (optional)
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxx  # For failure alerts
+```
+
+### Usage
+
+All pull scripts now support:
+- `--resume` (default: True) - Resume from checkpoint if previous pull was incomplete
+- `--no-resume` - Start fresh, ignore any previous checkpoints
+
+```bash
+# Resume incomplete pull
+python pull_daily_sales.py --resume
+
+# Start fresh
+python pull_daily_sales.py --no-resume
+```
+
+### Slack Alerts Setup
+
+1. Create Slack channel `#sp-api-alerts`
+2. Create incoming webhook in Slack (Apps → Incoming Webhooks)
+3. Add `SLACK_WEBHOOK_URL` secret to GitHub repo settings
+
+Alert format:
+```
+🔴 SP-API Pull Failed
+Pull Type: sales_traffic
+Marketplace: USA
+Error: 429 Too Many Requests (after 5 retries)
+Time: 2026-02-05 03:15:00 UTC
 ```
 
 ---
