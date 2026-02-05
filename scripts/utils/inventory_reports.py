@@ -53,7 +53,8 @@ def create_inventory_report(
     access_token: str,
     marketplace_code: str,
     report_type: str,
-    region: str = "NA"
+    region: str = "NA",
+    report_options: Dict[str, str] = None
 ) -> str:
     """
     Create an inventory report request.
@@ -66,6 +67,7 @@ def create_inventory_report(
         marketplace_code: Marketplace code (e.g., 'USA', 'UK')
         report_type: One of REPORT_TYPES keys
         region: API region ('NA', 'EU', 'FE')
+        report_options: Optional report options dictionary
 
     Returns:
         Report ID string
@@ -85,6 +87,10 @@ def create_inventory_report(
         "reportType": report_type_name,
         "marketplaceIds": [amazon_marketplace_id]
     }
+
+    # Add report options if provided (some reports need this)
+    if report_options:
+        payload["reportOptions"] = report_options
 
     response = requests.post(
         url,
