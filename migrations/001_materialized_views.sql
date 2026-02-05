@@ -50,7 +50,8 @@ GROUP BY
     parent_asin;
 
 -- Index for fast lookups by marketplace and week
-CREATE UNIQUE INDEX idx_weekly_mat_unique ON sp_weekly_asin_data_mat(marketplace_id, week_start, child_asin);
+-- Note: parent_asin included because same child_asin can have different parent_asins
+CREATE UNIQUE INDEX idx_weekly_mat_unique ON sp_weekly_asin_data_mat(marketplace_id, week_start, child_asin, parent_asin);
 CREATE INDEX idx_weekly_mat_week ON sp_weekly_asin_data_mat(week_start);
 CREATE INDEX idx_weekly_mat_marketplace ON sp_weekly_asin_data_mat(marketplace_id);
 CREATE INDEX idx_weekly_mat_asin ON sp_weekly_asin_data_mat(child_asin);
@@ -84,7 +85,7 @@ GROUP BY
     parent_asin;
 
 -- Index for fast lookups
-CREATE UNIQUE INDEX idx_monthly_mat_unique ON sp_monthly_asin_data_mat(marketplace_id, month, child_asin);
+CREATE UNIQUE INDEX idx_monthly_mat_unique ON sp_monthly_asin_data_mat(marketplace_id, month, child_asin, parent_asin);
 CREATE INDEX idx_monthly_mat_month ON sp_monthly_asin_data_mat(month);
 CREATE INDEX idx_monthly_mat_marketplace ON sp_monthly_asin_data_mat(marketplace_id);
 CREATE INDEX idx_monthly_mat_asin ON sp_monthly_asin_data_mat(child_asin);
@@ -138,7 +139,7 @@ WHERE d.date > dr.last_60_start
 GROUP BY d.marketplace_id, d.child_asin, d.parent_asin;
 
 -- Index for fast lookups
-CREATE UNIQUE INDEX idx_rolling_mat_unique ON sp_rolling_asin_metrics_mat(marketplace_id, child_asin);
+CREATE UNIQUE INDEX idx_rolling_mat_unique ON sp_rolling_asin_metrics_mat(marketplace_id, child_asin, parent_asin);
 CREATE INDEX idx_rolling_mat_marketplace ON sp_rolling_asin_metrics_mat(marketplace_id);
 CREATE INDEX idx_rolling_mat_asin ON sp_rolling_asin_metrics_mat(child_asin);
 
