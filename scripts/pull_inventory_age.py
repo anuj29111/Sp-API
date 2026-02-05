@@ -3,7 +3,8 @@
 Pull FBA Inventory Age Report from SP-API
 
 This script pulls inventory age breakdown by ASIN.
-Report type: GET_FBA_INVENTORY_AGED_DATA
+Primary report: GET_FBA_INVENTORY_AGED_DATA
+Fallback report: GET_FBA_MYI_ALL_INVENTORY_DATA (if age report fails)
 
 Fields captured (age buckets):
 - inv_age_0_to_90_days
@@ -17,6 +18,7 @@ Usage:
     python pull_inventory_age.py                      # All NA marketplaces
     python pull_inventory_age.py --marketplace USA    # Single marketplace
     python pull_inventory_age.py --dry-run           # Test without DB writes
+    python pull_inventory_age.py --fallback          # Use fallback report type
 """
 
 import os
@@ -183,13 +185,18 @@ def pull_marketplace_inventory_age(
     access_token: str,
     marketplace_code: str,
     region: str = "NA",
-    dry_run: bool = False
+    dry_run: bool = False,
+    use_fallback: bool = False
 ) -> Dict[str, Any]:
     """
     Pull inventory age for a single marketplace.
+
+    Args:
+        use_fallback: If True, use GET_FBA_MYI_ALL_INVENTORY_DATA instead of INVENTORY_AGE
     """
     start_time = time.time()
-    report_type = "GET_FBA_INVENTORY_AGED_DATA"
+    report_type_key = "FBA_ALL_INVENTORY" if use_fallback else "INVENTORY_AGE"
+    report_type = "GET_FBA_MYI_ALL_INVENTORY_DATA" if use_fallback else "GET_FBA_INVENTORY_AGED_DATA"
 
     print(f"\n{'='*50}")
     print(f"Pulling Inventory Age for {marketplace_code}")
@@ -209,7 +216,7 @@ def pull_marketplace_inventory_age(
 
     try:
         # Pull the report
-        rows = pull_inventory_report(access_token, marketplace_code, "INVENTORY_AGE", region)
+        rows = pull_inventory_report(access_token, marketplace_code, report_type_key, region)
 
         if dry_run:
             print(f"\n[DRY RUN] Would upsert {len(rows)} inventory age records")
@@ -271,6 +278,11 @@ def main():
         action="store_true",
         help="Pull data but don't write to database"
     )
+    parser.add_argument(
+        "--fallback",
+        action="store_true",
+        help="Use fallback report type (GET_FBA_MYI_ALL_INVENTORY_DATA)"
+    )
 
     args = parser.parse_args()
 
@@ -286,10 +298,13 @@ def main():
             print(f"Error: Invalid marketplace '{mp}'")
             sys.exit(1)
 
+    report_type_name = "FBA_ALL_INVENTORY (fallback)" if args.fallback else "INVENTORY_AGE"
+
     print("="*60)
     print("INVENTORY AGE PULL")
     print(f"Date: {date.today()}")
     print(f"Marketplaces: {', '.join(marketplaces)}")
+    print(f"Report type: {report_type_name}")
     print(f"Dry run: {args.dry_run}")
     print("="*60)
 
@@ -309,7 +324,8 @@ def main():
             access_token,
             marketplace,
             region="NA",
-            dry_run=args.dry_run
+            dry_run=args.dry_run,
+            use_fallback=args.fallback
         )
         results.append(result)
 
