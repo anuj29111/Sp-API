@@ -1,9 +1,10 @@
 name: Historical Backfill
 
 on:
-  # Run daily at 6 AM UTC to continue any incomplete backfill
+  # Run 4 times per day to speed up backfill completion
+  # 6 AM, 12 PM, 6 PM, 12 AM UTC
   schedule:
-    - cron: '0 6 * * *'
+    - cron: '0 0,6,12,18 * * *'
 
   # Manual trigger
   workflow_dispatch:

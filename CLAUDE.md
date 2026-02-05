@@ -39,7 +39,7 @@ POP System (Advertising API) ─────────────────
 | Late Attribution Refresh | ✅ Refreshes last 14 days |
 | Database Tables | ✅ `sp_daily_asin_data`, `sp_api_pulls` |
 | Views | ✅ Weekly, Monthly, Rolling metrics (MATERIALIZED) |
-| Backfill | ⏳ Dec 20, 2025 → Feb 3, 2026 (46 days), needs full 2-year run |
+| Backfill | 🔄 Oct 4, 2025 → Feb 3, 2026 (~123 days, 17%) - Auto-running 4x/day |
 | NA Authorization | ✅ USA, CA, MX working |
 
 **Data Available:**
@@ -121,7 +121,7 @@ POP System (Advertising API) ─────────────────
 │   ├── daily-pull.yml             # 2 AM UTC - Sales & Traffic + view refresh
 │   ├── inventory-daily.yml        # 3 AM UTC - FBA + AWD + monthly snapshots
 │   ├── storage-fees-monthly.yml   # 8th of month - Storage Fees
-│   └── historical-backfill.yml    # Manual - Historical data
+│   └── historical-backfill.yml    # 4x/day - Auto backfill until complete
 ├── requirements.txt
 └── CLAUDE.md
 ```
@@ -170,13 +170,16 @@ python pull_daily_sales.py --no-resume
 ## Database Tables
 
 ### Sales & Traffic Tables
-| Table/View | Purpose |
-|------------|---------|
-| `sp_daily_asin_data` | Per-ASIN daily sales & traffic |
-| `sp_api_pulls` | Pull tracking |
-| `sp_weekly_asin_data` | **View** - Weekly aggregates |
-| `sp_monthly_asin_data` | **View** - Monthly aggregates |
-| `sp_rolling_asin_metrics` | **View** - Rolling 7/14/30/60 day |
+| Table/View | Type | Purpose |
+|------------|------|---------|
+| `sp_daily_asin_data` | Table | Per-ASIN daily sales & traffic |
+| `sp_api_pulls` | Table | Pull tracking |
+| `sp_weekly_asin_data_mat` | **Materialized View** | Weekly aggregates (Monday-Sunday) |
+| `sp_monthly_asin_data_mat` | **Materialized View** | Monthly aggregates |
+| `sp_rolling_asin_metrics_mat` | **Materialized View** | Rolling 7/14/30/60 day metrics |
+| `sp_weekly_asin_data` | Wrapper View | Points to materialized view (backwards compat) |
+| `sp_monthly_asin_data` | Wrapper View | Points to materialized view (backwards compat) |
+| `sp_rolling_asin_metrics` | Wrapper View | Points to materialized view (backwards compat) |
 
 ### Inventory Tables
 | Table | Purpose | Key Fields |
@@ -186,6 +189,7 @@ python pull_daily_sales.py --no-resume
 | `sp_storage_fees` | Monthly storage fees by FNSKU+FC | `estimated_monthly_storage_fee`, `average_quantity_on_hand` |
 | `sp_inventory_age` | Age bucket breakdown | ⚠️ Not populated (Amazon API FATAL) |
 | `sp_inventory_pulls` | Inventory pull tracking | Status, row counts, errors |
+| `sp_inventory_monthly_snapshots` | 1st-of-month inventory archive | Historical inventory by SKU |
 
 ---
 
@@ -219,10 +223,14 @@ gh workflow run storage-fees-monthly.yml -f month=2025-12 -f marketplace=USA
 ```
 
 ### Historical Backfill (`historical-backfill.yml`)
+- **Schedule**: Runs **4 times per day** (0, 6, 12, 18 UTC) until complete
 - **Modes**: `test` (7 days), `month`, `quarter`, `year`, `full` (730 days)
+- **Auto-skip**: Exits early if backfill is >99% complete
+- **Resume**: Automatically skips existing data and continues from where it left off
 
 ```bash
-gh workflow run historical-backfill.yml -f mode=full
+gh workflow run historical-backfill.yml -f mode=full   # Manual trigger
+# Usually no need - it runs automatically until backfill is complete
 ```
 
 ---
@@ -281,7 +289,48 @@ FROM sp_storage_fees GROUP BY month, currency_code ORDER BY month DESC;
 
 -- Check pull status
 SELECT * FROM sp_inventory_pulls ORDER BY started_at DESC LIMIT 10;
+
+-- Check backfill progress
+SELECT
+    m.name as marketplace,
+    MIN(d.date) as earliest,
+    MAX(d.date) as latest,
+    COUNT(DISTINCT d.date) as days,
+    ROUND(COUNT(DISTINCT d.date)::numeric / 730 * 100, 1) as pct
+FROM sp_daily_asin_data d
+JOIN marketplaces m ON d.marketplace_id = m.id
+GROUP BY m.name;
+
+-- Check monthly inventory snapshots
+SELECT snapshot_date, marketplace_id, COUNT(*) as skus,
+       SUM(total_quantity) as total_units
+FROM sp_inventory_monthly_snapshots
+GROUP BY snapshot_date, marketplace_id
+ORDER BY snapshot_date DESC;
 ```
+
+---
+
+## Automation Summary
+
+All systems are now fully automated with no manual intervention required:
+
+| System | Schedule | Status |
+|--------|----------|--------|
+| **Daily Sales Pull** | 2 AM UTC daily | ✅ Running |
+| **14-Day Attribution Refresh** | 2 AM UTC daily | ✅ Running |
+| **Materialized View Refresh** | After daily pull | ✅ Running |
+| **FBA/AWD Inventory** | 3 AM UTC daily | ✅ Running |
+| **Monthly Inventory Snapshot** | 1st-2nd of month | ✅ Configured |
+| **Storage Fees** | 8th of month | ✅ Configured |
+| **Historical Backfill** | 4x/day until complete | 🔄 Running (~17%) |
+
+**Backfill Progress (as of Feb 5, 2026):**
+- USA: Oct 4, 2025 → Feb 3, 2026 (121 days, 16.6%)
+- Canada: Oct 4, 2025 → Feb 3, 2026 (123 days, 16.8%)
+- Mexico: Oct 5, 2025 → Feb 3, 2026 (122 days, 16.7%)
+
+Estimated completion: ~4-5 more days at 4 runs/day
 
 ---
 
@@ -298,6 +347,7 @@ SELECT * FROM sp_inventory_pulls ORDER BY started_at DESC LIMIT 10;
 
 ### Known Limitations
 - **Inventory Age**: Amazon's `GET_FBA_INVENTORY_AGED_DATA` returns FATAL status. This is a known widespread issue. Fallback report works but lacks age bucket data.
+- **GitHub Timeout**: Each backfill run has 5.5-hour limit (GitHub's max is 6 hours). Fixed by running 4x/day.
 
 ---
 
@@ -409,4 +459,4 @@ SELECT * FROM sp_inventory_pulls ORDER BY started_at DESC LIMIT 10;
 
 ---
 
-*Last Updated: February 5, 2026 (Session 2)*
+*Last Updated: February 5, 2026 (Session 3)*
