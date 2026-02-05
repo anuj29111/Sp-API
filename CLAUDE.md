@@ -102,15 +102,15 @@ POP System (Advertising API) ─────────────────
 │   ├── backfill_historical.py     # 2-year backfill
 │   ├── refresh_recent.py          # Late attribution refresh
 │   └── utils/
-│       ├── api_client.py          # ✨ NEW: Centralized HTTP client with retry/rate limiting
-│       ├── pull_tracker.py        # ✨ NEW: Checkpoint & resume capability
-│       ├── alerting.py            # ✨ NEW: Slack notifications for failures
+│       ├── api_client.py          # Centralized HTTP client with retry/rate limiting
+│       ├── pull_tracker.py        # Checkpoint & resume capability
+│       ├── alerting.py            # Slack webhook notifications
 │       ├── auth.py                # SP-API token refresh
 │       ├── reports.py             # Sales & Traffic report helpers
 │       ├── inventory_reports.py   # Inventory report helpers
 │       ├── fba_inventory_api.py   # FBA Inventory API client
 │       ├── awd_api.py             # AWD API client
-│       └── db.py                  # Supabase operations
+│       └── db.py                  # Supabase operations + checkpoint functions
 ├── .github/workflows/
 │   ├── daily-pull.yml             # 2 AM UTC - Sales & Traffic
 │   ├── inventory-daily.yml        # 3 AM UTC - FBA + AWD Inventory
@@ -124,74 +124,39 @@ POP System (Advertising API) ─────────────────
 
 ## API Resilience System ✅ COMPLETE
 
-### Overview
-
-All SP-API scripts now use a centralized API client with automatic retry and rate limiting.
+All SP-API scripts use a centralized API client with automatic retry, rate limiting, and Slack alerts.
 
 **Key Features:**
 - Automatic retry with exponential backoff (1s → 2s → 4s → 8s → 16s)
 - Rate limit header parsing (`x-amzn-RateLimit-*`)
 - Transient error detection (429, 500, 502, 503, 504)
 - Checkpoint-based resume capability for partial failures
-- Slack alerts on failures (optional)
+- Slack alerts on failures → **#sp-api-alerts** channel
 
 ### Core Modules
 
 | Module | Purpose |
 |--------|---------|
-| `api_client.py` | SPAPIClient class - handles all HTTP calls with retry/rate limiting |
-| `pull_tracker.py` | PullTracker class - tracks per-marketplace status, supports resume |
-| `alerting.py` | AlertManager - sends Slack notifications on failures |
+| `api_client.py` | SPAPIClient - HTTP calls with retry/rate limiting |
+| `pull_tracker.py` | PullTracker - per-marketplace status, resume support |
+| `alerting.py` | AlertManager - Slack webhook notifications |
 
-### Database Table
+### Slack Alerting ✅ CONFIGURED
 
-**`sp_pull_checkpoints`** - Tracks pull progress with resume capability:
-- `pull_type` - Type of pull ('sales_traffic', 'fba_inventory', etc.)
-- `pull_date` - Date being pulled
-- `status` - pending/in_progress/partial/completed/failed
-- `marketplace_status` - JSONB per-marketplace status
-- `checkpoint_data` - JSONB resume data
+- **Channel**: #sp-api-alerts (ID: C0ACPAQ80KZ)
+- **App**: SP-API Alerts (App ID: A0AD4S0KFU2)
+- **GitHub Secret**: `SLACK_WEBHOOK_URL` ✅ Added
 
-### Environment Variables
-
-```bash
-# API Client Config (optional - has defaults)
-SP_API_MAX_RETRIES=5          # Max retry attempts (default: 5)
-SP_API_BASE_DELAY=1.0         # Initial backoff delay in seconds (default: 1.0)
-SP_API_MAX_DELAY=60.0         # Max backoff delay in seconds (default: 60.0)
-SP_API_TIMEOUT=30             # Request timeout in seconds (default: 30)
-
-# Alerting (optional)
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxx  # For failure alerts
-```
+Alerts are sent automatically when pulls fail after retries.
 
 ### Usage
 
-All pull scripts now support:
-- `--resume` (default: True) - Resume from checkpoint if previous pull was incomplete
-- `--no-resume` - Start fresh, ignore any previous checkpoints
-
 ```bash
-# Resume incomplete pull
+# Resume incomplete pull (default)
 python pull_daily_sales.py --resume
 
 # Start fresh
 python pull_daily_sales.py --no-resume
-```
-
-### Slack Alerts Setup
-
-1. Create Slack channel `#sp-api-alerts`
-2. Create incoming webhook in Slack (Apps → Incoming Webhooks)
-3. Add `SLACK_WEBHOOK_URL` secret to GitHub repo settings
-
-Alert format:
-```
-🔴 SP-API Pull Failed
-Pull Type: sales_traffic
-Marketplace: USA
-Error: 429 Too Many Requests (after 5 retries)
-Time: 2026-02-05 03:15:00 UTC
 ```
 
 ---
@@ -332,118 +297,53 @@ SELECT * FROM sp_inventory_pulls ORDER BY started_at DESC LIMIT 10;
 
 ## Google Sheets Integration (Replacing GorillaROI) 🔄 IN PROGRESS
 
-### Overview
+Replacing GorillaROI ($600/month) with direct Supabase data pull into Google Sheet "API - Business Amazon 2026".
 
-Replacing GorillaROI ($600/month) with direct Supabase data pull into the existing Google Sheet "API - Business Amazon 2026".
-
-**Key Principles:**
-- **Zero hardcoding** - All config read from "Script Config" sheet
-- **Marketplace ID in A2** - Each Daily sheet has Supabase UUID in cell A2
-- **Country code in B2** - Country identifier (US, CA, UK, etc.)
-- **Preserve formatting** - Only update sales data, keep all formulas/formatting
-
-### Google Sheet Details
+### Sheet Details
 
 | Property | Value |
 |----------|-------|
-| Sheet Name | API - Business Amazon 2026 |
 | Sheet ID | `17nR0UFAOXul80mxzQeqBt2aAZ2szdYwVUWnc490NSbk` |
-| URL | https://docs.google.com/spreadsheets/d/17nR0UFAOXul80mxzQeqBt2aAZ2szdYwVUWnc490NSbk |
+| Apps Script | `/Sp-API/google-sheets/supabase_sales.gs` |
+| Config Location | "Script Config" tab, rows 88-92 |
 
-### Script Config Tab - SUPABASE SETTINGS
+### How It Works
 
-Located in "Script Config" tab, starting at row 88:
-
-| Row | Column A (Setting) | Column B (Parameter) | Column C (Value) |
-|-----|-------------------|---------------------|------------------|
-| 88 | SUPABASE SETTINGS | | |
-| 89 | Supabase URL | All | `https://yawaopfqkkvdqtsagmng.supabase.co` |
-| 90 | Supabase Anon Key | All | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...` (full key) |
-| 91 | Marketplace ID | US | `f47ac10b-58cc-4372-a567-0e02b2c3d479` |
-| 92 | Marketplace ID | CA | `a1b2c3d4-58cc-4372-a567-0e02b2c3d480` |
-
-**⚠️ Known Issue (Feb 5, 2026):** Data in rows 89-91 was pasted with tab characters embedded in column A instead of split across columns. Use "Data > Split text to columns" to fix. Rows 89-90 were fixed; row 91+ may still need fixing.
-
-### Apps Script Code
-
-**Location:** Extensions > Apps Script in the Google Sheet
-
-**Local Backup:** `/Sp-API/google-sheets/supabase_sales.gs`
-
-**Key Functions:**
-| Function | Purpose |
-|----------|---------|
-| `getSupabaseConfig()` | Reads URL, Anon Key, Marketplaces from Script Config sheet |
-| `fetchFromSupabase(endpoint, params, config)` | Generic REST API caller |
-| `getMonthlyData(marketplaceId, config)` | Fetches from `sp_monthly_asin_data` view |
-| `getWeeklyData(marketplaceId, config)` | Fetches from `sp_weekly_asin_data` view |
-| `getDailyData(marketplaceId, config)` | Fetches from `sp_daily_asin_data` view |
-| `refreshCurrentSheet()` | Main refresh - reads A2/B2 from active sheet |
-| `testConnection()` | Tests Supabase connectivity |
-| `onOpen()` | Creates "Supabase Data" menu |
-
-**Menu Items:**
-- Supabase Data > Refresh Current Sheet
-- Supabase Data > Refresh All Daily Sheets
-- Supabase Data > Test Connection
-
-### Marketplace UUIDs (Supabase)
-
-| Country | UUID | Amazon Marketplace ID |
-|---------|------|----------------------|
-| USA | `f47ac10b-58cc-4372-a567-0e02b2c3d479` | ATVPDKIKX0DER |
-| Canada | `a1b2c3d4-58cc-4372-a567-0e02b2c3d480` | A2EUQ1WTGCTBG2 |
-| UK | `b2c3d4e5-58cc-4372-a567-0e02b2c3d481` | A1F83G8C2ARO7P |
-| Germany | `c3d4e5f6-58cc-4372-a567-0e02b2c3d482` | A1PA6795UKMFR9 |
-| UAE | `e5f6a7b8-58cc-4372-a567-0e02b2c3d484` | A2VIGQ35RCS4UG |
-| Australia | `f6a7b8c9-58cc-4372-a567-0e02b2c3d485` | A39IBJ37TRP1C6 |
-
-### Daily Sheet Structure
-
-Each "Daily" sheet (USA Daily, CA Daily, etc.) has:
-- **A2**: Supabase marketplace UUID
+- **A2**: Marketplace UUID (e.g., `f47ac10b-58cc-4372-a567-0e02b2c3d479`)
 - **B2**: Country code (US, CA, etc.)
-- **Row 4**: Column headers with date patterns like "Dec 2025 Units", "Wk 51 Units", "Jan 2026 Rev"
-- **Row 5+**: Data rows with ASINs in column C
+- **Menu**: Supabase Data > Refresh Current Sheet
 
-The script parses headers to match against Supabase date fields and fills in corresponding values.
+### Marketplace UUIDs
 
-### Implementation Progress
+| Country | UUID |
+|---------|------|
+| USA | `f47ac10b-58cc-4372-a567-0e02b2c3d479` |
+| Canada | `a1b2c3d4-58cc-4372-a567-0e02b2c3d480` |
+| UK | `b2c3d4e5-58cc-4372-a567-0e02b2c3d481` |
+| Germany | `c3d4e5f6-58cc-4372-a567-0e02b2c3d482` |
+| UAE | `e5f6a7b8-58cc-4372-a567-0e02b2c3d484` |
+| Australia | `f6a7b8c9-58cc-4372-a567-0e02b2c3d485` |
 
-| Step | Status | Notes |
-|------|--------|-------|
-| Write Apps Script (supabase_sales.gs) | ✅ Done | 392 lines, zero hardcoding |
-| Add SUPABASE SETTINGS to Script Config | ⚠️ Partial | Data format issue - tabs instead of columns |
-| Update USA Daily A2 with UUID | ✅ Done | `f47ac10b-58cc-4372-a567-0e02b2c3d479` |
-| Script authorization | ✅ Done | User approved Google permissions |
-| Test Supabase connection | ❌ Blocked | Config parsing fails - needs column fix |
-| Test data refresh | ⏸️ Pending | |
-| Duplicate for CA Daily | ⏸️ Pending | |
+### Status
 
-### Next Steps
+| Step | Status |
+|------|--------|
+| Apps Script written | ✅ Done |
+| Script Config setup | ⚠️ Needs column fix |
+| Test connection | ⏸️ Pending |
 
-1. **Fix Script Config data format** - Ensure rows 89-91+ have data in separate columns A, B, C (not tab-delimited in column A)
-2. **Run "Test Connection"** - Should return "Connection successful!"
-3. **Create simple test sheet** - New sheet with just A2=UUID, B2=country, basic ASIN list
-4. **Test data pull** - Verify sales numbers populate correctly
-5. **Apply to USA Daily** - Once tested, apply to actual production sheet
-6. **Duplicate for other countries** - Copy sheet, change A2/B2, refresh
+---
 
-### Troubleshooting
+## GitHub Secrets
 
-**"Supabase URL or Anon Key not found" error:**
-- Script Config data is in wrong format
-- Check that column A has setting name, column B has parameter, column C has value
-- Use "Data > Split text to columns" if data is tab-delimited in single cells
-
-**"This sheet does not appear to be a Daily sheet" error:**
-- Sheet name must contain "Daily"
-- Examples: "USA Daily", "CA Daily", "Test Daily"
-
-**No data appears after refresh:**
-- Verify marketplace UUID in A2 matches a valid UUID in Supabase
-- Check that ASINs in the sheet exist in Supabase data
-- Check column headers match expected patterns ("Dec 2025 Units", "Wk 51 Units")
+| Secret | Purpose |
+|--------|---------|
+| `SP_LWA_CLIENT_ID` | Amazon SP-API credentials |
+| `SP_LWA_CLIENT_SECRET` | Amazon SP-API credentials |
+| `SP_REFRESH_TOKEN_NA` | North America refresh token |
+| `SUPABASE_URL` | Database URL |
+| `SUPABASE_SERVICE_KEY` | Database access |
+| `SLACK_WEBHOOK_URL` | Slack alerts for failures |
 
 ---
 
