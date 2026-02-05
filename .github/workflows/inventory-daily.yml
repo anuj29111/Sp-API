@@ -25,6 +25,11 @@ on:
         required: false
         type: boolean
         default: false
+      age_fallback:
+        description: 'Use fallback report for inventory age'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   pull-inventory:
@@ -89,6 +94,7 @@ jobs:
 
       - name: Pull Inventory Age
         if: ${{ github.event.inputs.report_type == 'all' || github.event.inputs.report_type == 'age' || github.event_name == 'schedule' }}
+        continue-on-error: true
         env:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
@@ -103,5 +109,8 @@ jobs:
           fi
           if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
             ARGS="$ARGS --dry-run"
+          fi
+          if [ "${{ github.event.inputs.age_fallback }}" == "true" ]; then
+            ARGS="$ARGS --fallback"
           fi
           python pull_inventory_age.py $ARGS
