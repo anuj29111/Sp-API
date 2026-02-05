@@ -253,4 +253,121 @@ SELECT * FROM sp_inventory_pulls ORDER BY started_at DESC LIMIT 10;
 
 ---
 
+## Google Sheets Integration (Replacing GorillaROI) 🔄 IN PROGRESS
+
+### Overview
+
+Replacing GorillaROI ($600/month) with direct Supabase data pull into the existing Google Sheet "API - Business Amazon 2026".
+
+**Key Principles:**
+- **Zero hardcoding** - All config read from "Script Config" sheet
+- **Marketplace ID in A2** - Each Daily sheet has Supabase UUID in cell A2
+- **Country code in B2** - Country identifier (US, CA, UK, etc.)
+- **Preserve formatting** - Only update sales data, keep all formulas/formatting
+
+### Google Sheet Details
+
+| Property | Value |
+|----------|-------|
+| Sheet Name | API - Business Amazon 2026 |
+| Sheet ID | `17nR0UFAOXul80mxzQeqBt2aAZ2szdYwVUWnc490NSbk` |
+| URL | https://docs.google.com/spreadsheets/d/17nR0UFAOXul80mxzQeqBt2aAZ2szdYwVUWnc490NSbk |
+
+### Script Config Tab - SUPABASE SETTINGS
+
+Located in "Script Config" tab, starting at row 88:
+
+| Row | Column A (Setting) | Column B (Parameter) | Column C (Value) |
+|-----|-------------------|---------------------|------------------|
+| 88 | SUPABASE SETTINGS | | |
+| 89 | Supabase URL | All | `https://yawaopfqkkvdqtsagmng.supabase.co` |
+| 90 | Supabase Anon Key | All | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...` (full key) |
+| 91 | Marketplace ID | US | `f47ac10b-58cc-4372-a567-0e02b2c3d479` |
+| 92 | Marketplace ID | CA | `a1b2c3d4-58cc-4372-a567-0e02b2c3d480` |
+
+**⚠️ Known Issue (Feb 5, 2026):** Data in rows 89-91 was pasted with tab characters embedded in column A instead of split across columns. Use "Data > Split text to columns" to fix. Rows 89-90 were fixed; row 91+ may still need fixing.
+
+### Apps Script Code
+
+**Location:** Extensions > Apps Script in the Google Sheet
+
+**Local Backup:** `/Sp-API/google-sheets/supabase_sales.gs`
+
+**Key Functions:**
+| Function | Purpose |
+|----------|---------|
+| `getSupabaseConfig()` | Reads URL, Anon Key, Marketplaces from Script Config sheet |
+| `fetchFromSupabase(endpoint, params, config)` | Generic REST API caller |
+| `getMonthlyData(marketplaceId, config)` | Fetches from `sp_monthly_asin_data` view |
+| `getWeeklyData(marketplaceId, config)` | Fetches from `sp_weekly_asin_data` view |
+| `getDailyData(marketplaceId, config)` | Fetches from `sp_daily_asin_data` view |
+| `refreshCurrentSheet()` | Main refresh - reads A2/B2 from active sheet |
+| `testConnection()` | Tests Supabase connectivity |
+| `onOpen()` | Creates "Supabase Data" menu |
+
+**Menu Items:**
+- Supabase Data > Refresh Current Sheet
+- Supabase Data > Refresh All Daily Sheets
+- Supabase Data > Test Connection
+
+### Marketplace UUIDs (Supabase)
+
+| Country | UUID | Amazon Marketplace ID |
+|---------|------|----------------------|
+| USA | `f47ac10b-58cc-4372-a567-0e02b2c3d479` | ATVPDKIKX0DER |
+| Canada | `a1b2c3d4-58cc-4372-a567-0e02b2c3d480` | A2EUQ1WTGCTBG2 |
+| UK | `b2c3d4e5-58cc-4372-a567-0e02b2c3d481` | A1F83G8C2ARO7P |
+| Germany | `c3d4e5f6-58cc-4372-a567-0e02b2c3d482` | A1PA6795UKMFR9 |
+| UAE | `e5f6a7b8-58cc-4372-a567-0e02b2c3d484` | A2VIGQ35RCS4UG |
+| Australia | `f6a7b8c9-58cc-4372-a567-0e02b2c3d485` | A39IBJ37TRP1C6 |
+
+### Daily Sheet Structure
+
+Each "Daily" sheet (USA Daily, CA Daily, etc.) has:
+- **A2**: Supabase marketplace UUID
+- **B2**: Country code (US, CA, etc.)
+- **Row 4**: Column headers with date patterns like "Dec 2025 Units", "Wk 51 Units", "Jan 2026 Rev"
+- **Row 5+**: Data rows with ASINs in column C
+
+The script parses headers to match against Supabase date fields and fills in corresponding values.
+
+### Implementation Progress
+
+| Step | Status | Notes |
+|------|--------|-------|
+| Write Apps Script (supabase_sales.gs) | ✅ Done | 392 lines, zero hardcoding |
+| Add SUPABASE SETTINGS to Script Config | ⚠️ Partial | Data format issue - tabs instead of columns |
+| Update USA Daily A2 with UUID | ✅ Done | `f47ac10b-58cc-4372-a567-0e02b2c3d479` |
+| Script authorization | ✅ Done | User approved Google permissions |
+| Test Supabase connection | ❌ Blocked | Config parsing fails - needs column fix |
+| Test data refresh | ⏸️ Pending | |
+| Duplicate for CA Daily | ⏸️ Pending | |
+
+### Next Steps
+
+1. **Fix Script Config data format** - Ensure rows 89-91+ have data in separate columns A, B, C (not tab-delimited in column A)
+2. **Run "Test Connection"** - Should return "Connection successful!"
+3. **Create simple test sheet** - New sheet with just A2=UUID, B2=country, basic ASIN list
+4. **Test data pull** - Verify sales numbers populate correctly
+5. **Apply to USA Daily** - Once tested, apply to actual production sheet
+6. **Duplicate for other countries** - Copy sheet, change A2/B2, refresh
+
+### Troubleshooting
+
+**"Supabase URL or Anon Key not found" error:**
+- Script Config data is in wrong format
+- Check that column A has setting name, column B has parameter, column C has value
+- Use "Data > Split text to columns" if data is tab-delimited in single cells
+
+**"This sheet does not appear to be a Daily sheet" error:**
+- Sheet name must contain "Daily"
+- Examples: "USA Daily", "CA Daily", "Test Daily"
+
+**No data appears after refresh:**
+- Verify marketplace UUID in A2 matches a valid UUID in Supabase
+- Check that ASINs in the sheet exist in Supabase data
+- Check column headers match expected patterns ("Dec 2025 Units", "Wk 51 Units")
+
+---
+
 *Last Updated: February 5, 2026*
