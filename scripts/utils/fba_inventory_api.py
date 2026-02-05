@@ -133,9 +133,8 @@ def get_all_inventory_summaries(
         summaries = payload.get("inventorySummaries", [])
         all_summaries.extend(summaries)
 
-        # Check for next page
-        pagination = payload.get("pagination", {})
-        next_token = pagination.get("nextToken")
+        # Check for next page - nextToken is at payload level, NOT inside pagination
+        next_token = payload.get("nextToken")
 
         if not next_token:
             break
@@ -180,6 +179,27 @@ def transform_inventory_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     details = summary.get("inventoryDetails", {})
     reserved = details.get("reservedQuantity", {})
     unfulfillable = details.get("unfulfillableQuantity", {})
+    researching = details.get("researchingQuantity", {})
+
+    # Core quantities
+    fulfillable = details.get("fulfillableQuantity", 0) or 0
+    reserved_total = reserved.get("totalReservedQuantity", 0) or 0
+    inbound_working = details.get("inboundWorkingQuantity", 0) or 0
+    inbound_shipped = details.get("inboundShippedQuantity", 0) or 0
+    inbound_receiving = details.get("inboundReceivingQuantity", 0) or 0
+    unsellable_total = unfulfillable.get("totalUnfulfillableQuantity", 0) or 0
+    researching_total = researching.get("totalResearchingQuantity", 0) or 0
+
+    # Calculate total quantity
+    total_quantity = (
+        fulfillable +
+        reserved_total +
+        inbound_working +
+        inbound_shipped +
+        inbound_receiving +
+        unsellable_total +
+        researching_total
+    )
 
     return {
         "sku": summary.get("sellerSku", ""),
@@ -189,11 +209,29 @@ def transform_inventory_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         "condition": summary.get("condition"),
 
         # Core inventory metrics
-        "fulfillable_quantity": details.get("fulfillableQuantity", 0) or 0,
-        "reserved_quantity": reserved.get("totalReservedQuantity", 0) or 0,
-        "inbound_working_quantity": details.get("inboundWorkingQuantity", 0) or 0,
-        "inbound_shipped_quantity": details.get("inboundShippedQuantity", 0) or 0,
-        "unsellable_quantity": unfulfillable.get("totalUnfulfillableQuantity", 0) or 0,
+        "fulfillable_quantity": fulfillable,
+        "reserved_quantity": reserved_total,
+        "inbound_working_quantity": inbound_working,
+        "inbound_shipped_quantity": inbound_shipped,
+        "inbound_receiving_quantity": inbound_receiving,
+        "unsellable_quantity": unsellable_total,
+        "total_quantity": total_quantity,
+
+        # Reserved breakdown
+        "pending_customer_order_qty": reserved.get("pendingCustomerOrderQuantity", 0) or 0,
+        "pending_transshipment_qty": reserved.get("pendingTransshipmentQuantity", 0) or 0,
+        "fc_processing_qty": reserved.get("fcProcessingQuantity", 0) or 0,
+
+        # Unfulfillable/damaged breakdown
+        "customer_damaged_qty": unfulfillable.get("customerDamagedQuantity", 0) or 0,
+        "warehouse_damaged_qty": unfulfillable.get("warehouseDamagedQuantity", 0) or 0,
+        "distributor_damaged_qty": unfulfillable.get("distributorDamagedQuantity", 0) or 0,
+        "carrier_damaged_qty": unfulfillable.get("carrierDamagedQuantity", 0) or 0,
+        "defective_qty": unfulfillable.get("defectiveQuantity", 0) or 0,
+        "expired_qty": unfulfillable.get("expiredQuantity", 0) or 0,
+
+        # Researching quantity
+        "researching_qty": researching_total,
     }
 
 
