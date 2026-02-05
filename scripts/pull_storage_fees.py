@@ -125,6 +125,7 @@ def upsert_storage_fees(
         return 0
 
     # Transform to database format
+    # Note: Amazon report uses underscores in field names (e.g., product_name, not product-name)
     db_rows = []
     for row in rows:
         db_row = {
@@ -133,14 +134,14 @@ def upsert_storage_fees(
             "sku": row.get("sku", ""),
             "asin": row.get("asin"),
             "fnsku": row.get("fnsku"),
-            "product_name": row.get("product-name"),
+            "product_name": row.get("product_name"),
 
             # Fee data
-            "storage_type": row.get("storage-type"),
-            "product_size_tier": row.get("product-size-tier"),
-            "average_quantity_on_hand": parse_decimal(row.get("average-quantity-on-hand")),
-            "average_quantity_pending_removal": parse_decimal(row.get("average-quantity-pending-removal")),
-            "estimated_monthly_storage_fee": parse_decimal(row.get("estimated-monthly-storage-fee")),
+            "storage_type": row.get("dangerous_goods_storage_type", row.get("storage_type")),
+            "product_size_tier": row.get("product_size_tier"),
+            "average_quantity_on_hand": parse_decimal(row.get("average_quantity_on_hand")),
+            "average_quantity_pending_removal": parse_decimal(row.get("average_quantity_pending_removal")),
+            "estimated_monthly_storage_fee": parse_decimal(row.get("estimated_monthly_storage_fee")),
             "currency_code": row.get("currency"),
 
             "import_id": import_id
