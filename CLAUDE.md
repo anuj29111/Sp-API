@@ -38,7 +38,8 @@ POP System (Advertising API) ─────────────────
 | Daily Pull | ✅ Running at 2 AM UTC |
 | Late Attribution Refresh | ✅ Refreshes last 14 days |
 | Database Tables | ✅ `sp_daily_asin_data`, `sp_api_pulls` |
-| Views | ✅ Weekly, Monthly, Rolling metrics |
+| Views | ✅ Weekly, Monthly, Rolling metrics (MATERIALIZED) |
+| Backfill | ⏳ Dec 20, 2025 → Feb 3, 2026 (46 days), needs full 2-year run |
 | NA Authorization | ✅ USA, CA, MX working |
 
 **Data Available:**
@@ -99,8 +100,10 @@ POP System (Advertising API) ─────────────────
 │   ├── pull_awd_inventory.py      # AWD inventory (uses AWD API)
 │   ├── pull_inventory_age.py      # Inventory age buckets (--fallback option)
 │   ├── pull_storage_fees.py       # Monthly storage fees
-│   ├── backfill_historical.py     # 2-year backfill
+│   ├── backfill_historical.py     # 2-year backfill (with skip-existing)
 │   ├── refresh_recent.py          # Late attribution refresh
+│   ├── refresh_views.py           # Refresh materialized views
+│   ├── capture_monthly_inventory.py  # Monthly inventory snapshots
 │   └── utils/
 │       ├── api_client.py          # Centralized HTTP client with retry/rate limiting
 │       ├── pull_tracker.py        # Checkpoint & resume capability
@@ -111,9 +114,12 @@ POP System (Advertising API) ─────────────────
 │       ├── fba_inventory_api.py   # FBA Inventory API client
 │       ├── awd_api.py             # AWD API client
 │       └── db.py                  # Supabase operations + checkpoint functions
+├── migrations/
+│   ├── 001_materialized_views.sql # Convert views to materialized views
+│   └── 002_inventory_snapshots.sql # Monthly inventory snapshot table
 ├── .github/workflows/
-│   ├── daily-pull.yml             # 2 AM UTC - Sales & Traffic
-│   ├── inventory-daily.yml        # 3 AM UTC - FBA + AWD Inventory
+│   ├── daily-pull.yml             # 2 AM UTC - Sales & Traffic + view refresh
+│   ├── inventory-daily.yml        # 3 AM UTC - FBA + AWD + monthly snapshots
 │   ├── storage-fees-monthly.yml   # 8th of month - Storage Fees
 │   └── historical-backfill.yml    # Manual - Historical data
 ├── requirements.txt
@@ -295,23 +301,35 @@ SELECT * FROM sp_inventory_pulls ORDER BY started_at DESC LIMIT 10;
 
 ---
 
-## Google Sheets Integration (Replacing GorillaROI) 🔄 IN PROGRESS
+## Google Sheets Integration ✅ CONNECTION WORKING
 
-Replacing GorillaROI ($600/month) with direct Supabase data pull into Google Sheet "API - Business Amazon 2026".
+**Replaces:** GorillaROI ($600/month)
 
-### Sheet Details
+### Google Sheet
 
 | Property | Value |
 |----------|-------|
-| Sheet ID | `17nR0UFAOXul80mxzQeqBt2aAZ2szdYwVUWnc490NSbk` |
+| Name | API - Business Amazon 2026 |
+| URL | https://docs.google.com/spreadsheets/d/17nR0UFAOXul80mxzQeqBt2aAZ2szdYwVUWnc490NSbk |
 | Apps Script | `/Sp-API/google-sheets/supabase_sales.gs` |
-| Config Location | "Script Config" tab, rows 88-92 |
+| Config | "Script Config" tab, rows 88-91 |
 
 ### How It Works
 
-- **A2**: Marketplace UUID (e.g., `f47ac10b-58cc-4372-a567-0e02b2c3d479`)
-- **B2**: Country code (US, CA, etc.)
-- **Menu**: Supabase Data > Refresh Current Sheet
+1. **Zero hardcoding** - All config read from "Script Config" sheet
+2. **A2**: Marketplace UUID (Supabase ID for the country)
+3. **B2**: Country code (US, CA, UK, etc.)
+4. **Menu**: Supabase Data > Refresh Current Sheet
+5. **Duplicate template** - Copy USA Daily, change A2/B2 = new country works
+
+### Script Config Setup (Rows 88-91)
+
+| Row | Column A | Column B | Column C |
+|-----|----------|----------|----------|
+| 88 | SUPABASE SETTINGS | | |
+| 89 | Supabase URL | All | `https://yawaopfqkkvdqtsagmng.supabase.co` |
+| 90 | Supabase Anon Key | All | (JWT token) |
+| 91 | Marketplace ID | US | `f47ac10b-58cc-4372-a567-0e02b2c3d479` |
 
 ### Marketplace UUIDs
 
@@ -324,13 +342,21 @@ Replacing GorillaROI ($600/month) with direct Supabase data pull into Google She
 | UAE | `e5f6a7b8-58cc-4372-a567-0e02b2c3d484` |
 | Australia | `f6a7b8c9-58cc-4372-a567-0e02b2c3d485` |
 
-### Status
+### Status ✅
 
 | Step | Status |
 |------|--------|
-| Apps Script written | ✅ Done |
-| Script Config setup | ⚠️ Needs column fix |
-| Test connection | ⏸️ Pending |
+| Apps Script (`supabase_sales.gs`) | ✅ Complete |
+| Script Config (rows 88-91) | ✅ Configured |
+| Supabase connection test | ✅ **Working** |
+| Test sheet (Sheet221) setup | ✅ Ready |
+| USA Daily data refresh | ⏸️ Next step |
+
+### Next Steps
+
+1. **Test "Refresh Current Sheet" on USA Daily** - Verify data populates correctly
+2. **Adapt header parsing** - Match "Dec 2025 Units", "Wk 51 Units" format in USA Daily
+3. **Duplicate for other countries** - Copy sheet, change A2/B2, refresh
 
 ---
 

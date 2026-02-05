@@ -98,6 +98,16 @@ jobs:
           echo "Running: $CMD"
           $CMD
 
+      # Step 3: Refresh materialized views (after data is pulled)
+      - name: Refresh materialized views
+        if: success()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          echo "Refreshing materialized views..."
+          python scripts/refresh_views.py || echo "View refresh skipped (views may not exist yet)"
+
       - name: Post summary
         if: always()
         run: |

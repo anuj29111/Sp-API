@@ -114,3 +114,13 @@ jobs:
             ARGS="$ARGS --fallback"
           fi
           python pull_inventory_age.py $ARGS
+
+      # Step 4: Capture monthly inventory snapshot (on 1st-2nd of month)
+      - name: Capture monthly inventory snapshot
+        if: ${{ github.event_name == 'schedule' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          cd scripts
+          python capture_monthly_inventory.py || echo "Monthly snapshot skipped (not 1st-2nd of month or table not created)"

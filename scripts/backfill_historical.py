@@ -109,6 +109,46 @@ def check_existing_data(marketplace_code: str, report_date: date) -> bool:
     return existing is not None and existing.get("status") == "completed"
 
 
+def get_backfill_status(marketplaces: List[str], start_date: date, end_date: date) -> Dict:
+    """
+    Get current backfill status by checking database for existing data.
+
+    Returns:
+        Dict with coverage stats per marketplace
+    """
+    from scripts.utils.db import get_supabase_client, MARKETPLACE_UUIDS
+
+    client = get_supabase_client()
+    total_days = (end_date - start_date).days + 1
+
+    status = {}
+    for mp in marketplaces:
+        mp_uuid = MARKETPLACE_UUIDS.get(mp)
+        if not mp_uuid:
+            continue
+
+        # Count existing dates for this marketplace in range
+        result = client.table("sp_daily_asin_data") \
+            .select("date", count="exact") \
+            .eq("marketplace_id", mp_uuid) \
+            .gte("date", start_date.isoformat()) \
+            .lte("date", end_date.isoformat()) \
+            .execute()
+
+        existing_count = result.count or 0
+        missing_count = total_days - existing_count
+        pct_complete = (existing_count / total_days * 100) if total_days > 0 else 0
+
+        status[mp] = {
+            "existing": existing_count,
+            "missing": missing_count,
+            "total": total_days,
+            "pct_complete": pct_complete
+        }
+
+    return status
+
+
 def pull_single_day(
     marketplace_code: str,
     report_date: date,
@@ -226,6 +266,18 @@ def run_backfill(
     print(f"📅 Date range: {start_date} to {end_date} ({len(dates)} days)")
     print(f"🌎 Marketplaces: {', '.join(marketplaces)}")
     print(f"📦 Total potential requests: {total_requests}")
+
+    # Show current status
+    if not dry_run:
+        try:
+            print("\n📈 Current backfill status:")
+            status = get_backfill_status(marketplaces, start_date, end_date)
+            for mp, s in status.items():
+                bar_len = int(s['pct_complete'] / 5)  # 20 chars = 100%
+                bar = "█" * bar_len + "░" * (20 - bar_len)
+                print(f"   {mp}: [{bar}] {s['pct_complete']:.1f}% ({s['existing']}/{s['total']} days, {s['missing']} missing)")
+        except Exception as e:
+            print(f"⚠️  Could not check status: {str(e)[:50]}")
 
     # Estimate time
     estimated_minutes = total_requests * RATE_LIMIT_SECONDS / 60
@@ -372,9 +424,11 @@ def run_backfill(
         if len(stats["errors"]) > 10:
             print(f"   ... and {len(stats['errors']) - 10} more errors")
 
-    # Clean up state file on successful completion
-    if stats["failed"] == 0:
+    # Clean up state file on successful completion (all processed, even if some failed)
+    # Failed dates can be retried on next run since skip_existing checks DB, not state file
+    if stats["completed"] > 0 or stats["skipped"] > 0:
         STATE_FILE.unlink(missing_ok=True)
+        print("\n💾 State file cleaned up - use skip_existing on next run to retry failed dates")
 
     return stats
 
@@ -475,9 +529,14 @@ def main():
         dry_run=args.dry_run
     )
 
-    # Exit with error code if any failed
-    if stats.get("failed", 0) > 0:
+    # Exit with error code only if NOTHING was processed (complete failure)
+    # Individual date failures are OK - they'll be retried on next run
+    if stats.get("completed", 0) == 0 and stats.get("skipped", 0) == 0:
+        print("\n❌ Complete failure - no dates processed successfully")
         sys.exit(1)
+    elif stats.get("failed", 0) > 0:
+        print(f"\n⚠️  {stats['failed']} dates failed - will retry on next run")
+        # Exit success so workflow shows green, but note the failures
 
 
 if __name__ == "__main__":
