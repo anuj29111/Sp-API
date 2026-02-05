@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "mcp__railway__check-railway-status"
+      "mcp__railway__check-railway-status",
+      "mcp__5820046f-4454-4fe3-ae10-3d4ad82c7bbe__slack_create_channel",
+      "mcp__cf5e66c8-c65b-45ea-b440-6a27ef414481__slack_send_message"
     ]
   }
 }
