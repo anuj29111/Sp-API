@@ -128,11 +128,12 @@ function getMonthlyData(marketplaceId, config) {
 
 /**
  * Fetches weekly sales data for a marketplace
+ * Includes iso_year and iso_week_number for header matching
  */
 function getWeeklyData(marketplaceId, config) {
   return fetchFromSupabase('/rest/v1/sp_weekly_asin_data', {
     'marketplace_id': 'eq.' + marketplaceId,
-    'select': 'week_start,child_asin,units_ordered,ordered_product_sales'
+    'select': 'week_start,iso_year,iso_week_number,child_asin,units_ordered,ordered_product_sales'
   }, config);
 }
 
@@ -184,6 +185,10 @@ function refreshCurrentSheet() {
 
     Logger.log('Fetched ' + monthlyData.length + ' monthly rows, ' + weeklyData.length + ' weekly rows');
 
+    // Build week number to week_start lookup: { "2026-6": "2026-02-02", "2025-51": "2025-12-15" }
+    const weekNumToDate = buildWeekNumberLookup(weeklyData);
+    Logger.log('Week lookup built: ' + Object.keys(weekNumToDate).length + ' weeks');
+
     // Create lookup maps
     const monthlyMap = createDataMap(monthlyData, 'month');
     const weeklyMap = createDataMap(weeklyData, 'week_start');
@@ -209,8 +214,10 @@ function refreshCurrentSheet() {
     const lastRow = sheet.getLastRow();
     const asins = sheet.getRange(5, asinCol + 1, lastRow - 4, 1).getValues();
 
-    // Map column headers to dates
-    const columnDateMap = mapColumnsToDates(headerRow);
+    // Map column headers to dates, passing week lookup for resolution
+    const columnDateMap = mapColumnsToDates(headerRow, weekNumToDate);
+
+    Logger.log('Column mappings found: ' + Object.keys(columnDateMap).length);
 
     // Update data for each ASIN
     let updatedCount = 0;
@@ -220,7 +227,7 @@ function refreshCurrentSheet() {
 
       const sheetRow = row + 5; // Data starts at row 5
 
-      // Update monthly columns
+      // Update monthly and weekly columns
       for (const [col, dateInfo] of Object.entries(columnDateMap)) {
         const colNum = parseInt(col);
         let value = null;
@@ -258,6 +265,23 @@ function refreshCurrentSheet() {
 }
 
 /**
+ * Builds a lookup from "year-weeknum" to actual week_start date
+ * e.g., { "2026-6": "2026-02-02", "2025-51": "2025-12-15" }
+ */
+function buildWeekNumberLookup(weeklyData) {
+  const lookup = {};
+
+  for (const row of weeklyData) {
+    if (row.iso_year && row.iso_week_number && row.week_start) {
+      const key = row.iso_year + '-' + row.iso_week_number;
+      lookup[key] = row.week_start;
+    }
+  }
+
+  return lookup;
+}
+
+/**
  * Creates a nested map: { asin: { dateKey: { units, revenue } } }
  */
 function createDataMap(data, dateField) {
@@ -283,8 +307,10 @@ function createDataMap(data, dateField) {
 /**
  * Maps column indices to date information
  * Parses headers like "Dec 2025 Units", "Jan 2026 Rev", "Wk 51 Units"
+ * @param {Array} headers - Header row values
+ * @param {Object} weekNumToDate - Lookup map from "year-weeknum" to week_start date
  */
-function mapColumnsToDates(headers) {
+function mapColumnsToDates(headers, weekNumToDate) {
   const map = {};
 
   const monthNames = {
@@ -292,6 +318,9 @@ function mapColumnsToDates(headers) {
     'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
     'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
   };
+
+  // Determine current year for week headers without explicit year
+  const currentYear = new Date().getFullYear();
 
   for (let i = 0; i < headers.length; i++) {
     const header = String(headers[i]).toLowerCase().trim();
@@ -311,19 +340,61 @@ function mapColumnsToDates(headers) {
       continue;
     }
 
-    // Match weekly: "Wk 51 Units" or "Wk 1 Units"
+    // Match weekly with year: "Wk 51 2025 Units" or "Wk 6 2026 Rev"
+    const weekWithYearMatch = header.match(/^wk\s+(\d+)\s+(\d{4})\s+(units|rev)/i);
+    if (weekWithYearMatch) {
+      const weekNum = parseInt(weekWithYearMatch[1]);
+      const year = parseInt(weekWithYearMatch[2]);
+      const field = weekWithYearMatch[3].toLowerCase() === 'rev' ? 'revenue' : 'units';
+
+      const lookupKey = year + '-' + weekNum;
+      const weekStart = weekNumToDate[lookupKey];
+
+      if (weekStart) {
+        map[i] = {
+          type: 'week',
+          key: weekStart,
+          field: field
+        };
+      } else {
+        Logger.log('No week_start found for: ' + lookupKey);
+      }
+      continue;
+    }
+
+    // Match weekly without year: "Wk 51 Units" or "Wk 6 Rev"
+    // Try current year first, then previous year (for late-year weeks like 51, 52)
     const weekMatch = header.match(/^wk\s+(\d+)\s+(units|rev)/i);
     if (weekMatch) {
       const weekNum = parseInt(weekMatch[1]);
       const field = weekMatch[2].toLowerCase() === 'rev' ? 'revenue' : 'units';
 
-      // Convert week number to approximate date (this is simplified)
-      // In production, you'd want to match against actual week_start dates from your data
-      map[i] = {
-        type: 'week',
-        key: 'week_' + weekNum, // Will need to match with actual week_start
-        field: field
-      };
+      // Try current year first
+      let lookupKey = currentYear + '-' + weekNum;
+      let weekStart = weekNumToDate[lookupKey];
+
+      // If not found and week is high (51, 52, 53), try previous year
+      if (!weekStart && weekNum >= 50) {
+        lookupKey = (currentYear - 1) + '-' + weekNum;
+        weekStart = weekNumToDate[lookupKey];
+      }
+
+      // If not found and week is low (1-5), could be current year's early weeks
+      if (!weekStart && weekNum <= 5) {
+        // Already tried current year, try next year just in case
+        lookupKey = (currentYear + 1) + '-' + weekNum;
+        weekStart = weekNumToDate[lookupKey];
+      }
+
+      if (weekStart) {
+        map[i] = {
+          type: 'week',
+          key: weekStart,
+          field: field
+        };
+      } else {
+        Logger.log('No week_start found for week ' + weekNum + ' (tried multiple years)');
+      }
     }
   }
 
