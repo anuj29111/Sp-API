@@ -153,6 +153,14 @@ def upsert_storage_fees(
         if db_row["fnsku"]:
             db_rows.append(db_row)
 
+    # Deduplicate by (fnsku, fulfillment_center) - keep last occurrence
+    # Storage fees report may have multiple rows for same FNSKU+FC
+    seen = {}
+    for row in db_rows:
+        key = (row["fnsku"], row["fulfillment_center"])
+        seen[key] = row  # Last one wins
+    db_rows = list(seen.values())
+
     # Batch upsert
     if db_rows:
         chunk_size = 500
