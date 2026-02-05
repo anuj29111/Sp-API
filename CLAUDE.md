@@ -17,9 +17,9 @@ Build a complete **Contribution Margin (CM1/CM2) profitability system** by pulli
 ## Architecture
 
 ```
-Amazon SP-API → GitHub Actions (2 AM UTC daily) → Supabase → Web App
-                                                      ↑
-POP System (Advertising API) ─────────────────────────┘
+Amazon SP-API → GitHub Actions (scheduled) → Supabase → Web App
+                                                 ↑
+POP System (Advertising API) ────────────────────┘
 ```
 
 - **GitHub Actions**: Runs Python scripts on schedule
@@ -28,189 +28,64 @@ POP System (Advertising API) ─────────────────
 
 ---
 
-## Implementation Phases
+## Implementation Status
 
 ### Phase 1: Sales & Traffic Data ✅ COMPLETE
-**Status:** Daily pulls running, 2-year backfill in progress
 
 | Component | Status |
 |-----------|--------|
 | GitHub Repo | ✅ https://github.com/anuj29111/Sp-API |
-| Python Scripts | ✅ Complete |
-| GitHub Actions | ✅ Daily 2 AM UTC |
+| Daily Pull | ✅ Running at 2 AM UTC |
+| Late Attribution Refresh | ✅ Refreshes last 14 days |
 | Database Tables | ✅ `sp_daily_asin_data`, `sp_api_pulls` |
+| Views | ✅ Weekly, Monthly, Rolling metrics |
 | NA Authorization | ✅ USA, CA, MX working |
-| Full Backfill (2 years) | 🔄 Running (workflow 21676122116) |
 
 **Data Available:**
-- `units_ordered` - Units sold
-- `ordered_product_sales` - Revenue ($)
+- `units_ordered`, `ordered_product_sales` - Sales metrics
 - `sessions`, `page_views` - Traffic metrics
 - `buy_box_percentage`, `unit_session_percentage` - Performance
 
-### Phase 2: Financial Reports ⏸️ PENDING
-**Purpose:** Get storage fees, reimbursements, promotions for CM2 calculation
+### Phase 2: Inventory Data ✅ COMPLETE (with known limitation)
 
-| Report Type | SP-API Report | Data |
-|-------------|---------------|------|
-| Storage Fees | `GET_FBA_STORAGE_FEE_CHARGES_DATA` | Monthly storage costs per ASIN |
-| Reimbursements | `GET_FBA_REIMBURSEMENTS_DATA` | Amazon reimbursements |
-| Promotions | Settlement Report | Promo discounts given |
-| Shipping Income | Settlement Report | FBA shipping credits |
-| Other Income | Settlement Report | Misc adjustments |
+| Data | Source | Status | Records |
+|------|--------|--------|---------|
+| **FBA Inventory** | FBA Inventory API (v1/summaries) | ✅ Working | 269 records daily |
+| **AWD Inventory** | AWD API (v2024-05-09) | ✅ Working | 62 records (14,363 units) |
+| **Storage Fees** | Reports API | ✅ Working | 14,227 records/month |
+| **Inventory Age** | Reports API | ⚠️ BLOCKED | Amazon API returns FATAL |
 
-### Phase 3: Inventory Reports ⏸️ PENDING
-**Purpose:** Track inventory levels, age, stranded inventory
+**6 Key Data Points - All Available:**
+| # | Data Point | Field | Table |
+|---|------------|-------|-------|
+| 1 | Available/Fulfillable | `fulfillable_quantity` | `sp_fba_inventory` |
+| 2 | AWD On-Hand | `total_onhand_quantity` | `sp_awd_inventory` |
+| 3 | AWD In-Transit | `total_inbound_quantity` | `sp_awd_inventory` |
+| 4 | Reserved | `reserved_quantity` + breakdowns | `sp_fba_inventory` |
+| 5 | Inbound Working | `inbound_working_quantity` | `sp_fba_inventory` |
+| 6 | Inbound Shipped | `inbound_shipped_quantity` | `sp_fba_inventory` |
 
-| Report Type | SP-API Report | Data |
-|-------------|---------------|------|
-| FBA Inventory | `GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA` | Current FBA stock |
-| Inventory Age | `GET_FBA_INVENTORY_AGED_DATA` | Age buckets (0-90, 91-180, etc.) |
-| Stranded | `GET_STRANDED_INVENTORY_UI_DATA` | Unfulfillable inventory |
+**Known Issue:** `GET_FBA_INVENTORY_AGED_DATA` returns FATAL status - this is a known Amazon API issue affecting many sellers. A fallback report exists but doesn't include age bucket breakdowns.
+
+### Phase 3: Financial Reports ⏸️ PENDING
+
+| Report Type | SP-API Report | Status |
+|-------------|---------------|--------|
+| Storage Fees | `GET_FBA_STORAGE_FEE_CHARGES_DATA` | ✅ Working (Phase 2) |
+| Reimbursements | `GET_FBA_REIMBURSEMENTS_DATA` | ⏸️ Not started |
+| Settlement Reports | Various | ⏸️ Not started |
 
 ### Phase 4: Product Master Data ⏸️ PENDING
-**Purpose:** Store static per-ASIN costs for CM1 calculation
 
 | Field | Description | Source |
 |-------|-------------|--------|
 | `fba_fees_per_unit` | Amazon fulfillment fee | Manual / FBA Fee Preview API |
 | `cogs_per_unit` | Cost of goods sold | Manual entry |
 | `shipping_to_fba` | Inbound shipping cost | Manual entry |
-| `vat_rate` | VAT percentage (if applicable) | Manual entry |
 
 ### Phase 5: CM1/CM2 Calculation Engine ⏸️ PENDING
-**Purpose:** Calculate profitability metrics
-
-```sql
--- CM1 (Contribution Margin 1) - Gross profit before ads & storage
-CM1 = Revenue - (FBA_Fees × Units) - (COGS × Units) - VAT
-
--- CM2 (Contribution Margin 2) - Net operating profit
-CM2 = CM1 - Ad_Spend_SP - Ad_Spend_SD - Storage_Fees
-
--- Percentages
-CM1% = CM1 / Revenue
-CM2% = CM2 / Revenue
-```
 
 ### Phase 6: Web Dashboard ⏸️ PENDING
-**Purpose:** Display metrics in Chalkola ONE web app
-
----
-
-## CM2 Calc Excel Analysis
-
-**Source:** `Business Excel/Business Amazon -2025.xlsx` → Sheet "CM2 Calc"
-
-### Sheet Structure (270 rows × 2,457 columns)
-- **Rows 4-268**: ~265 ASINs
-- **Columns**: Time-series from Jun 2022 onwards
-
-### Data Sections in Excel
-
-| Section | Columns | Description | Data Source |
-|---------|---------|-------------|-------------|
-| ASIN Info | 0-4 | Link, Price, ASIN, Name, Category | Static |
-| Monthly Sales | 5-82 | Units sold per month | **SP-API** ✅ |
-| Ad Spend SP | 83-161 | Sponsored Products spend | **POP System** ✅ |
-| Weekly Sales | 162-392 | Units by week | **SP-API** ✅ |
-| Monthly Revenue | 393-472 | Revenue ($) per month | **SP-API** ✅ |
-| Ad Spend SD | 473-551 | Sponsored Display spend | **POP System** ✅ |
-| Ad Sales | 552-630 | PPC-attributed sales | **POP System** ✅ |
-| Storage | 631-709 | FBA storage fees | SP-API Phase 2 |
-| Promotion | 710-787 | Promo discounts | SP-API Phase 2 |
-| Reimbursement | 788-866 | Amazon reimbursements | SP-API Phase 2 |
-| Shipping Income | 867-946 | FBA shipping credits | SP-API Phase 2 |
-| Other Income | 947-1026 | Misc income | SP-API Phase 2 |
-| Event Tracking | 1027-1135 | Prime Day, BFCM metrics | Derived |
-| Daily Sales | 1136-2083 | Daily unit data | **SP-API** ✅ |
-| Fixed Costs | 2085-2087 | FBAFees, COGS, VAT per ASIN | Manual (Phase 4) |
-| CM1 Monthly | 2089-2153 | Contribution Margin 1 | Calculated (Phase 5) |
-| CM2 Monthly | 2157-2221 | Contribution Margin 2 | Calculated (Phase 5) |
-| CM1%/CM2% | 2222-2456 | Margin percentages + YTD | Calculated (Phase 5) |
-
-### Event Dates Tracked
-Prime Day and Fall Prime Day dates:
-- 2023: Jul 11-12, Oct 10-11
-- 2024: Jul 16-17, Oct 8-9
-- 2025: Jul 8-11, Oct 7-8
-- 2026+: Projected dates
-
----
-
-## Data Source Mapping
-
-| Data Needed | Source | Status | Phase |
-|-------------|--------|--------|-------|
-| Monthly Sales (units) | SP-API Sales & Traffic | ✅ Pulling | 1 |
-| Monthly Revenue ($) | SP-API Sales & Traffic | ✅ Pulling | 1 |
-| Daily Sales (units) | SP-API Sales & Traffic | ✅ Pulling | 1 |
-| Sessions/Page Views | SP-API Sales & Traffic | ✅ Pulling | 1 |
-| Ad Spend SP | POP System | ✅ In Supabase | - |
-| Ad Spend SD | POP System | ✅ In Supabase | - |
-| Ad Sales (PPC) | POP System | ✅ In Supabase | - |
-| Storage Fees | SP-API FBA Reports | ⏸️ Pending | 2 |
-| Promotions | SP-API Settlement | ⏸️ Pending | 2 |
-| Reimbursements | SP-API Reimbursements | ⏸️ Pending | 2 |
-| Shipping Income | SP-API Settlement | ⏸️ Pending | 2 |
-| Other Income | SP-API Settlement | ⏸️ Pending | 2 |
-| FBA Fees/unit | Manual / API | ⏸️ Pending | 4 |
-| COGS/unit | Manual entry | ⏸️ Pending | 4 |
-
----
-
-## Current Status
-
-### Phase 1 Progress
-| Component | Status |
-|-----------|--------|
-| GitHub Repo | ✅ https://github.com/anuj29111/Sp-API |
-| Python Scripts | ✅ Complete |
-| GitHub Actions Workflow | ✅ Complete |
-| Database Tables | ✅ Created (with RLS) |
-| GitHub Secrets | ✅ Configured |
-| NA Authorization | ✅ Working (USA, CA, MX) |
-| Daily Pull (Automated) | ✅ Running at 2 AM UTC |
-| Late Attribution Refresh | ✅ Refreshes last 14 days |
-| Weekly View | ✅ `sp_weekly_asin_data` |
-| Rolling Metrics View | ✅ `sp_rolling_asin_metrics` |
-| Test Backfill (7 days) | ✅ Passed |
-| Full Backfill (2 years) | 🔄 Running (workflow 21676122116) |
-| EU Authorization | ⏸️ Pending |
-| FE Authorization | ⏸️ Pending |
-
----
-
-## GitHub Actions Workflows
-
-### 1. Daily Pull (`daily-pull.yml`)
-- **Schedule**: 2 AM UTC daily
-- **Modes**: `daily`, `refresh`, `both` (default)
-- **Default behavior**: Pulls new day + refreshes last 14 days for late attribution
-
-```bash
-# Manual trigger examples
-gh workflow run daily-pull.yml                         # Default: both modes
-gh workflow run daily-pull.yml -f mode=daily           # Just new day
-gh workflow run daily-pull.yml -f mode=refresh         # Just refresh last 14 days
-gh workflow run daily-pull.yml -f date=2026-01-30 -f marketplace=USA
-```
-
-### 2. Historical Backfill (`historical-backfill.yml`)
-- **Modes**: `test` (7 days), `month` (30), `quarter` (90), `year` (365), `full` (730)
-- **Order**: Latest dates first (reverse chronological)
-- **Timeout**: 6 hours per job
-
-```bash
-# Test first (7 days)
-gh workflow run historical-backfill.yml -f mode=test
-
-# Full 2-year backfill (~40 hours)
-gh workflow run historical-backfill.yml -f mode=full
-
-# Custom date range
-gh workflow run historical-backfill.yml -f start_date=2024-01-01 -f end_date=2024-12-31
-```
 
 ---
 
@@ -219,74 +94,99 @@ gh workflow run historical-backfill.yml -f start_date=2024-01-01 -f end_date=202
 ```
 /Sp-API/
 ├── scripts/
-│   ├── pull_daily_sales.py     # Main daily pull script
-│   ├── backfill_historical.py  # Historical backfill (2 years, latest first)
-│   ├── refresh_recent.py       # Late attribution refresh (last N days)
+│   ├── pull_daily_sales.py        # Daily sales & traffic pull
+│   ├── pull_inventory.py          # FBA inventory (uses API)
+│   ├── pull_awd_inventory.py      # AWD inventory (uses AWD API)
+│   ├── pull_inventory_age.py      # Inventory age buckets (--fallback option)
+│   ├── pull_storage_fees.py       # Monthly storage fees
+│   ├── backfill_historical.py     # 2-year backfill
+│   ├── refresh_recent.py          # Late attribution refresh
 │   └── utils/
-│       ├── __init__.py
-│       ├── auth.py             # SP-API token refresh
-│       ├── reports.py          # Report API helpers
-│       └── db.py               # Supabase operations (upsert support)
+│       ├── auth.py                # SP-API token refresh
+│       ├── reports.py             # Sales & Traffic report helpers
+│       ├── inventory_reports.py   # Inventory report helpers
+│       ├── fba_inventory_api.py   # FBA Inventory API client
+│       ├── awd_api.py             # AWD API client
+│       └── db.py                  # Supabase operations
 ├── .github/workflows/
-│   ├── daily-pull.yml          # Cron: 2 AM UTC daily + refresh
-│   └── historical-backfill.yml # Manual: historical data backfill
-├── Business Excel/
-│   └── Business Amazon -2025.xlsx  # GorillaROI reference (Daily + CM2 Calc sheets)
+│   ├── daily-pull.yml             # 2 AM UTC - Sales & Traffic
+│   ├── inventory-daily.yml        # 3 AM UTC - FBA + AWD Inventory
+│   ├── storage-fees-monthly.yml   # 8th of month - Storage Fees
+│   └── historical-backfill.yml    # Manual - Historical data
 ├── requirements.txt
-├── .env.example
-├── .gitignore
-├── README.md
-└── CLAUDE.md                   # This file
+└── CLAUDE.md
 ```
 
 ---
 
-## Database Tables & Views
+## Database Tables
 
-All in Supabase project `yawaopfqkkvdqtsagmng` with `sp_` prefix:
-
+### Sales & Traffic Tables
 | Table/View | Purpose |
 |------------|---------|
-| `sp_daily_asin_data` | Per-ASIN daily sales & traffic metrics |
-| `sp_daily_totals` | Account-level daily totals per marketplace |
-| `sp_api_pulls` | Track pull status (supports upsert for re-pulls) |
-| `sp_monthly_asin_data` | **View** - Monthly aggregates by ASIN |
-| `sp_weekly_asin_data` | **View** - Weekly aggregates (ISO weeks Mon-Sun) |
-| `sp_rolling_asin_metrics` | **View** - Rolling 7/14/30/60 day metrics |
+| `sp_daily_asin_data` | Per-ASIN daily sales & traffic |
+| `sp_api_pulls` | Pull tracking |
+| `sp_weekly_asin_data` | **View** - Weekly aggregates |
+| `sp_monthly_asin_data` | **View** - Monthly aggregates |
+| `sp_rolling_asin_metrics` | **View** - Rolling 7/14/30/60 day |
 
-### Key Fields in sp_daily_asin_data
-- `date`, `marketplace_id`, `child_asin` (unique constraint)
-- Sales: `units_ordered`, `ordered_product_sales`, `currency_code`
-- Traffic: `sessions`, `page_views`, `buy_box_percentage`, `unit_session_percentage`
-- B2B variants of all metrics
-- Note: `unit_session_percentage` can exceed 100% (multiple units per session)
-
-### Database Functions
-- `get_asin_rolling_metrics(asin, marketplace_id, days, end_date)` - Get rolling metrics for any period
-- `get_marketplace_daily_totals(marketplace_id, start_date, end_date)` - Get daily totals for a marketplace
+### Inventory Tables
+| Table | Purpose | Key Fields |
+|-------|---------|------------|
+| `sp_fba_inventory` | Daily FBA inventory snapshot | `fulfillable_quantity`, `reserved_quantity`, `inbound_*`, detailed breakdowns |
+| `sp_awd_inventory` | Daily AWD inventory | `total_onhand_quantity`, `total_inbound_quantity`, `available_quantity` |
+| `sp_storage_fees` | Monthly storage fees by FNSKU+FC | `estimated_monthly_storage_fee`, `average_quantity_on_hand` |
+| `sp_inventory_age` | Age bucket breakdown | ⚠️ Not populated (Amazon API FATAL) |
+| `sp_inventory_pulls` | Inventory pull tracking | Status, row counts, errors |
 
 ---
 
-## GitHub Secrets (Configured)
+## GitHub Workflows
 
-| Secret | Status |
-|--------|--------|
-| `SP_LWA_CLIENT_ID` | ✅ |
-| `SP_LWA_CLIENT_SECRET` | ✅ |
-| `SP_REFRESH_TOKEN_NA` | ✅ |
-| `SUPABASE_URL` | ✅ |
-| `SUPABASE_SERVICE_KEY` | ✅ |
+### Daily Sales Pull (`daily-pull.yml`)
+- **Schedule**: 2 AM UTC daily
+- **Modes**: `daily`, `refresh`, `both` (default)
+
+```bash
+gh workflow run daily-pull.yml                         # Default: both modes
+gh workflow run daily-pull.yml -f marketplace=USA      # Single marketplace
+```
+
+### FBA & AWD Inventory Pull (`inventory-daily.yml`)
+- **Schedule**: 3 AM UTC daily
+- **Report Types**: `all`, `inventory`, `awd`, `age`
+
+```bash
+gh workflow run inventory-daily.yml                              # All types
+gh workflow run inventory-daily.yml -f report_type=inventory     # FBA only
+gh workflow run inventory-daily.yml -f report_type=awd           # AWD only
+gh workflow run inventory-daily.yml -f age_fallback=true         # Use fallback for age
+```
+
+### Monthly Storage Fees (`storage-fees-monthly.yml`)
+- **Schedule**: 8th of month (data available ~7 days after month end)
+
+```bash
+gh workflow run storage-fees-monthly.yml -f month=2025-12 -f marketplace=USA
+```
+
+### Historical Backfill (`historical-backfill.yml`)
+- **Modes**: `test` (7 days), `month`, `quarter`, `year`, `full` (730 days)
+
+```bash
+gh workflow run historical-backfill.yml -f mode=full
+```
 
 ---
 
 ## Marketplaces
 
 ### Currently Authorized (NA Region)
-| Country | Code | Amazon ID | Supabase UUID |
-|---------|------|-----------|---------------|
-| USA | USA | ATVPDKIKX0DER | f47ac10b-58cc-4372-a567-0e02b2c3d479 |
-| Canada | CA | A2EUQ1WTGCTBG2 | a1b2c3d4-58cc-4372-a567-0e02b2c3d480 |
-| Mexico | MX | A1AM78C64UM0Y8 | c9d0e1f2-58cc-4372-a567-0e02b2c3d488 |
+| Country | Code | Amazon ID |
+|---------|------|-----------|
+| USA | USA | ATVPDKIKX0DER |
+| Canada | CA | A2EUQ1WTGCTBG2 |
+| Mexico | MX | A1AM78C64UM0Y8 |
 
 ### Pending Authorization
 - **EU Region**: UK, Germany, France, Italy, Spain, UAE
@@ -294,143 +194,63 @@ All in Supabase project `yawaopfqkkvdqtsagmng` with `sp_` prefix:
 
 ---
 
-## Rate Limits & Timing
+## Quick Commands
 
-| Operation | Limit | Notes |
-|-----------|-------|-------|
-| createReport | ~1/min | 65 second wait between requests |
-| getReport | 2/sec | Used for polling |
-| getReportDocument | ~1/min | Download rate limited |
-| Batch pause | 2 min | Every 30 requests |
-| Amazon data delay | 2 days | Data available ~34 hours after day ends |
-| Late attribution | 14 days | Amazon may update data for up to 14 days |
-
----
-
-## Debugging
-
-### Check Pull Status
-```sql
-SELECT * FROM sp_api_pulls
-ORDER BY started_at DESC
-LIMIT 10;
-```
-
-### Check Data Coverage
-```sql
-SELECT
-  MIN(date) as earliest,
-  MAX(date) as latest,
-  COUNT(DISTINCT date) as days_covered
-FROM sp_daily_asin_data;
-```
-
-### Check Data by Date
-```sql
-SELECT
-  date,
-  m.code as marketplace,
-  COUNT(*) as asin_count,
-  SUM(units_ordered) as total_units,
-  ROUND(SUM(ordered_product_sales)::numeric, 2) as total_sales
-FROM sp_daily_asin_data d
-JOIN marketplaces m ON d.marketplace_id = m.id
-GROUP BY date, m.code
-ORDER BY date DESC, m.code;
-```
-
-### Check Workflow Status
 ```bash
-gh run list --workflow=historical-backfill.yml --limit 5
+# Check workflow status
+gh run list --workflow=daily-pull.yml --limit 5
+gh run list --workflow=inventory-daily.yml --limit 5
+gh run list --workflow=storage-fees-monthly.yml --limit 5
+
+# View workflow logs
 gh run view <run_id> --log | tail -50
+
+# Manual triggers
+gh workflow run daily-pull.yml
+gh workflow run inventory-daily.yml -f report_type=all
+gh workflow run storage-fees-monthly.yml -f month=2025-12
+```
+
+```sql
+-- Check sales data coverage
+SELECT MIN(date), MAX(date), COUNT(DISTINCT date) FROM sp_daily_asin_data;
+
+-- Check FBA inventory
+SELECT date, COUNT(*) as records, SUM(fulfillable_quantity) as fulfillable
+FROM sp_fba_inventory GROUP BY date ORDER BY date DESC LIMIT 5;
+
+-- Check AWD inventory
+SELECT date, COUNT(*) as records,
+       SUM(total_onhand_quantity) as onhand,
+       SUM(total_inbound_quantity) as inbound
+FROM sp_awd_inventory GROUP BY date ORDER BY date DESC;
+
+-- Check storage fees
+SELECT month, COUNT(*) as records,
+       ROUND(SUM(estimated_monthly_storage_fee)::numeric, 2) as total_fees,
+       currency_code
+FROM sp_storage_fees GROUP BY month, currency_code ORDER BY month DESC;
+
+-- Check pull status
+SELECT * FROM sp_inventory_pulls ORDER BY started_at DESC LIMIT 10;
 ```
 
 ---
 
-## Known Issues & Fixes Applied
+## Pending Tasks
 
-### 1. Numeric Column Overflow (Fixed)
-- **Issue**: `unit_session_percentage` can exceed 100% (e.g., 3 units in 1 session = 300%)
-- **Fix**: Changed NUMERIC(5,2) to NUMERIC(7,2) for percentage columns
+### Next Priority: Phase 3 - Financial Reports
+1. **Reimbursement Reports** - `GET_FBA_REIMBURSEMENTS_DATA`
+2. **Settlement Reports** - For promotions, shipping income
 
-### 2. Duplicate Pull Records (Fixed)
-- **Issue**: Re-pulling same date/marketplace caused unique constraint violation
-- **Fix**: Changed `create_pull_record()` to use upsert instead of insert
+### Future Phases
+1. **Phase 4**: Product master table for COGS/FBA fees (manual entry initially)
+2. **Phase 5**: CM1/CM2 calculation views
+3. **Phase 6**: Web dashboard integration
 
-### 3. Views Depend on Column Types (Fixed)
-- **Issue**: Can't alter column types when views depend on them
-- **Fix**: Drop views → alter columns → recreate views (in single migration)
-
----
-
-## Session Log
-
-### Feb 4, 2026 (Session 4) - CM2 Calc Analysis ✅
-**Completed:**
-1. Analyzed CM2 Calc sheet structure (270 rows × 2,457 columns)
-2. Identified all 16+ data sections in the Excel
-3. Mapped each data requirement to its source (SP-API, POP, Manual)
-4. Documented CM1/CM2 calculation formulas
-5. Created implementation phase roadmap (Phases 1-6)
-6. Updated CLAUDE.md with complete project scope
-
-**Key Findings:**
-- Phase 1 (Sales & Traffic) provides foundation ✅
-- Phase 2 (Financial Reports) needed for storage, reimbursements
-- Phase 4 (Product Master) needed for COGS/FBA fees per ASIN
-- POP system already has advertising data we need
-
-### Feb 4, 2026 (Session 3) - Backfill Workflow & Fixes ✅
-**Completed:**
-1. Fixed numeric column precision for percentage fields
-2. Fixed pull record to use upsert for re-pulls
-3. Created `scripts/refresh_recent.py` for late attribution refresh
-4. Updated `daily-pull.yml` to support modes (daily/refresh/both)
-5. Created `historical-backfill.yml` workflow with multiple modes
-6. Modified backfill to process dates in reverse order (latest first)
-7. ✅ Test backfill (7 days) completed successfully
-8. 🔄 Started full 2-year backfill (workflow 21676122116)
-
-### Feb 4, 2026 (Session 2) - Backfill & Aggregation ✅
-**Completed:**
-1. Analyzed GorillaROI Business Excel structure (400+ columns)
-2. Mapped Excel columns to SP-API data sources (~70% replicable)
-3. Created historical backfill script
-4. Created weekly aggregation view (ISO weeks)
-5. Created rolling metrics view
-
-### Feb 4, 2026 (Session 1) - Initial Implementation ✅
-**Completed:**
-1. Created GitHub repo
-2. Built Python scripts (auth, reports, db, main pull)
-3. Set up GitHub Actions workflow
-4. Created Supabase tables with RLS
-5. Configured GitHub Secrets
-6. Ran first successful pull - 346 ASINs
+### Known Limitations
+- **Inventory Age**: Amazon's `GET_FBA_INVENTORY_AGED_DATA` returns FATAL status. This is a known widespread issue. Fallback report works but lacks age bucket data.
 
 ---
 
-## Next Steps
-
-### Immediate
-1. **Monitor full backfill**: `gh run view 21676122116`
-2. **Verify data coverage** after backfill completes
-
-### Phase 2 Implementation
-1. Add Storage Fee report pulling
-2. Add Reimbursement report pulling
-3. Add Settlement report parsing (promotions, shipping income)
-
-### Phase 4 Implementation
-1. Create `sp_product_master` table for static ASIN costs
-2. Build UI for entering COGS/FBA fees per ASIN
-3. Consider FBA Fee Preview API for automated fee lookup
-
-### Phase 5 Implementation
-1. Create CM1/CM2 calculation views
-2. Join with POP advertising data
-3. Build aggregation views (monthly, quarterly, YTD)
-
----
-
-*Last Updated: February 4, 2026*
+*Last Updated: February 5, 2026*
