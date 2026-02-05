@@ -149,6 +149,29 @@ def get_backfill_status(marketplaces: List[str], start_date: date, end_date: dat
     return status
 
 
+def is_backfill_complete(marketplaces: List[str], start_date: date, end_date: date, threshold: float = 99.0) -> bool:
+    """
+    Check if backfill is essentially complete (above threshold %).
+
+    Args:
+        marketplaces: List of marketplace codes
+        start_date: Start of backfill range
+        end_date: End of backfill range
+        threshold: Percentage threshold to consider complete (default 99%)
+
+    Returns:
+        True if all marketplaces are above threshold
+    """
+    try:
+        status = get_backfill_status(marketplaces, start_date, end_date)
+        for mp, s in status.items():
+            if s["pct_complete"] < threshold:
+                return False
+        return True
+    except Exception:
+        return False  # If we can't check, assume not complete
+
+
 def pull_single_day(
     marketplace_code: str,
     report_date: date,
@@ -267,15 +290,24 @@ def run_backfill(
     print(f"🌎 Marketplaces: {', '.join(marketplaces)}")
     print(f"📦 Total potential requests: {total_requests}")
 
-    # Show current status
+    # Show current status and check if already complete
     if not dry_run:
         try:
             print("\n📈 Current backfill status:")
             status = get_backfill_status(marketplaces, start_date, end_date)
+            all_complete = True
             for mp, s in status.items():
                 bar_len = int(s['pct_complete'] / 5)  # 20 chars = 100%
                 bar = "█" * bar_len + "░" * (20 - bar_len)
                 print(f"   {mp}: [{bar}] {s['pct_complete']:.1f}% ({s['existing']}/{s['total']} days, {s['missing']} missing)")
+                if s['pct_complete'] < 99.0:
+                    all_complete = False
+
+            # Exit early if backfill is already complete
+            if all_complete:
+                print("\n✅ Backfill is already complete (>99% for all marketplaces)!")
+                print("   No further action needed. Exiting.")
+                return {"completed": 0, "skipped": 0, "failed": 0, "total_asins": 0, "already_complete": True}
         except Exception as e:
             print(f"⚠️  Could not check status: {str(e)[:50]}")
 

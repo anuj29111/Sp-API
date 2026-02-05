@@ -301,7 +301,7 @@ SELECT * FROM sp_inventory_pulls ORDER BY started_at DESC LIMIT 10;
 
 ---
 
-## Google Sheets Integration ✅ CONNECTION WORKING
+## Google Sheets Integration 🔧 IN PROGRESS
 
 **Replaces:** GorillaROI ($600/month)
 
@@ -311,18 +311,11 @@ SELECT * FROM sp_inventory_pulls ORDER BY started_at DESC LIMIT 10;
 |----------|-------|
 | Name | API - Business Amazon 2026 |
 | URL | https://docs.google.com/spreadsheets/d/17nR0UFAOXul80mxzQeqBt2aAZ2szdYwVUWnc490NSbk |
-| Apps Script | `/Sp-API/google-sheets/supabase_sales.gs` |
-| Config | "Script Config" tab, rows 88-91 |
+| Apps Script Project | https://script.google.com/u/2/home/projects/105bgL_S41PBK6M3CBOHkZ9A9-TXL3hIPJDu5ouk_D8nBT-p-LQKUvZvb/edit |
+| Local Script Copy | `/Sp-API/google-sheets/supabase_sales.gs` |
+| Config | "Script Config" tab, rows 88-93 |
 
-### How It Works
-
-1. **Zero hardcoding** - All config read from "Script Config" sheet
-2. **A2**: Marketplace UUID (Supabase ID for the country)
-3. **B2**: Country code (US, CA, UK, etc.)
-4. **Menu**: Supabase Data > Refresh Current Sheet
-5. **Duplicate template** - Copy USA Daily, change A2/B2 = new country works
-
-### Script Config Setup (Rows 88-91)
+### Script Config Setup (Rows 88-93)
 
 | Row | Column A | Column B | Column C |
 |-----|----------|----------|----------|
@@ -330,6 +323,8 @@ SELECT * FROM sp_inventory_pulls ORDER BY started_at DESC LIMIT 10;
 | 89 | Supabase URL | All | `https://yawaopfqkkvdqtsagmng.supabase.co` |
 | 90 | Supabase Anon Key | All | (JWT token) |
 | 91 | Marketplace ID | US | `f47ac10b-58cc-4372-a567-0e02b2c3d479` |
+| 92 | Marketplace ID | CA | `a1b2c3d4-58cc-4372-a567-0e02b2c3d480` |
+| 93 | Marketplace ID | MX | `c9d0e1f2-58cc-4372-a567-0e02b2c3d488` |
 
 ### Marketplace UUIDs
 
@@ -337,26 +332,67 @@ SELECT * FROM sp_inventory_pulls ORDER BY started_at DESC LIMIT 10;
 |---------|------|
 | USA | `f47ac10b-58cc-4372-a567-0e02b2c3d479` |
 | Canada | `a1b2c3d4-58cc-4372-a567-0e02b2c3d480` |
+| Mexico | `c9d0e1f2-58cc-4372-a567-0e02b2c3d488` |
 | UK | `b2c3d4e5-58cc-4372-a567-0e02b2c3d481` |
 | Germany | `c3d4e5f6-58cc-4372-a567-0e02b2c3d482` |
 | UAE | `e5f6a7b8-58cc-4372-a567-0e02b2c3d484` |
 | Australia | `f6a7b8c9-58cc-4372-a567-0e02b2c3d485` |
 
-### Status ✅
+### Current Status
 
-| Step | Status |
-|------|--------|
-| Apps Script (`supabase_sales.gs`) | ✅ Complete |
-| Script Config (rows 88-91) | ✅ Configured |
-| Supabase connection test | ✅ **Working** |
-| Test sheet (Sheet221) setup | ✅ Ready |
-| USA Daily data refresh | ⏸️ Next step |
+| Step | Status | Notes |
+|------|--------|-------|
+| Apps Script deployed | ✅ Complete | Functions: `refreshCurrentSheet`, `testConnection`, etc. |
+| Script Config (rows 88-93) | ✅ Configured | US, CA, MX marketplace IDs added |
+| Supabase connection test | ✅ **Working** | "Connection successful! Found 1 test record(s)" |
+| USA Daily data refresh | ⚠️ **Issue** | Returns "Updated 0 cells for 266 ASINs" |
 
-### Next Steps
+### Known Issue: Date/ASIN Matching
 
-1. **Test "Refresh Current Sheet" on USA Daily** - Verify data populates correctly
-2. **Adapt header parsing** - Match "Dec 2025 Units", "Wk 51 Units" format in USA Daily
-3. **Duplicate for other countries** - Copy sheet, change A2/B2, refresh
+**Problem:** Script connects successfully and fetches 266 ASINs from Supabase, but updates 0 cells.
+
+**Root Cause Analysis:**
+1. **Date format mismatch** - Sheet dates come from `=TRANSPOSE(Inputs!Q15:Q38)` formula (actual date objects). Script needs to convert Google Sheets date objects to `YYYY-MM-DD` format to match Supabase.
+2. **ASIN column structure** - Column C uses `=FILTER('Input products'!A3:A,...)` formulas. Script needs to read displayed values, not formulas.
+
+**Sheet Structure (USA Daily):**
+- Row 4: Date headers (4/2, 3/2, 2/2... in d/m format)
+- Column C: ASINs (via FILTER formula from "Input products" sheet)
+- Data columns start at column F
+
+### Smart Refresh System Design (AUTOMATIC)
+
+**Goal:** Automatic refresh with different frequencies based on data age.
+
+| Data Age | Refresh Frequency | Trigger |
+|----------|-------------------|---------|
+| Today | Every 4 hours | Time-based trigger |
+| Last 10 days | Once daily at 6 AM | Time-based trigger |
+| 11+ days old | Never | Data is finalized |
+
+**Implementation Plan:**
+1. Add Google Apps Script time-based triggers
+2. Store "last refresh" metadata in Script Config sheet
+3. Smart logic to only fetch what's needed based on date age
+
+### Next Session Tasks
+
+**Priority 1: Fix Date/ASIN Matching**
+1. Debug `refreshCurrentSheet` function - examine date parsing logic
+2. Fix date format conversion (Google Sheets date → YYYY-MM-DD string)
+3. Fix ASIN reading (get displayed values from FILTER formulas)
+4. Test on USA Daily sheet
+
+**Priority 2: Implement Automatic Refresh**
+1. Add time-based triggers in Apps Script:
+   - Every 4 hours: Refresh today's data
+   - Daily at 6 AM UTC: Refresh last 10 days
+2. Add refresh metadata tracking to Script Config
+3. Implement smart refresh logic (skip old finalized data)
+
+**Priority 3: Multi-Country Support**
+1. Test CA and MX marketplace data pulls
+2. Create CA Daily and MX Daily sheets (duplicate USA Daily template)
 
 ---
 
@@ -373,4 +409,4 @@ SELECT * FROM sp_inventory_pulls ORDER BY started_at DESC LIMIT 10;
 
 ---
 
-*Last Updated: February 5, 2026*
+*Last Updated: February 5, 2026 (Session 2)*
