@@ -190,17 +190,6 @@ def transform_inventory_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
     unsellable_total = unfulfillable.get("totalUnfulfillableQuantity", 0) or 0
     researching_total = researching.get("totalResearchingQuantity", 0) or 0
 
-    # Calculate total quantity
-    total_quantity = (
-        fulfillable +
-        reserved_total +
-        inbound_working +
-        inbound_shipped +
-        inbound_receiving +
-        unsellable_total +
-        researching_total
-    )
-
     return {
         "sku": summary.get("sellerSku", ""),
         "asin": summary.get("asin"),
@@ -209,13 +198,13 @@ def transform_inventory_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
         "condition": summary.get("condition"),
 
         # Core inventory metrics
+        # Note: total_quantity is a GENERATED column in DB, don't include it
         "fulfillable_quantity": fulfillable,
         "reserved_quantity": reserved_total,
         "inbound_working_quantity": inbound_working,
         "inbound_shipped_quantity": inbound_shipped,
         "inbound_receiving_quantity": inbound_receiving,
         "unsellable_quantity": unsellable_total,
-        "total_quantity": total_quantity,
 
         # Reserved breakdown
         "pending_customer_order_qty": reserved.get("pendingCustomerOrderQuantity", 0) or 0,
