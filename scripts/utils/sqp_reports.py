@@ -364,6 +364,10 @@ def _create_brand_analytics_report(
 
     url = f"https://{endpoint}/reports/2021-06-30/reports"
 
+    # SQP uses "asin" (singular, required), SCP uses "asins" (plural, optional)
+    is_sqp = "SEARCH_QUERY" in report_type
+    asin_key = "asin" if is_sqp else "asins"
+
     payload = {
         "reportType": report_type,
         "marketplaceIds": [amazon_marketplace_id],
@@ -371,7 +375,7 @@ def _create_brand_analytics_report(
         "dataEndTime": period_end.strftime("%Y-%m-%dT00:00:00Z"),
         "reportOptions": {
             "reportPeriod": period_type,
-            "asin": asin_string
+            asin_key: asin_string
         }
     }
 
