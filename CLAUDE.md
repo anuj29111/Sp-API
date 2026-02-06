@@ -47,6 +47,12 @@ POP System (Advertising API) ─────────────────
 - `sessions`, `page_views` - Traffic metrics
 - `buy_box_percentage`, `unit_session_percentage` - Performance
 
+**Date Logic:**
+- Each marketplace uses its own timezone (USA/CA/MX = PST, UK = GMT, etc.)
+- Default: Yesterday in marketplace timezone (Sales & Traffic has ~12-24hr delay)
+- 14-day attribution refresh catches updates to recent data
+- Re-pulls dates with 0 ASINs automatically
+
 ### Phase 2: Inventory Data ✅ COMPLETE (with known limitation)
 
 | Data | Source | Status | Records |
@@ -78,12 +84,6 @@ POP System (Advertising API) ─────────────────
 
 ### Phase 4: Product Master Data ⏸️ PENDING
 
-| Field | Description | Source |
-|-------|-------------|--------|
-| `fba_fees_per_unit` | Amazon fulfillment fee | Manual / FBA Fee Preview API |
-| `cogs_per_unit` | Cost of goods sold | Manual entry |
-| `shipping_to_fba` | Inbound shipping cost | Manual entry |
-
 ### Phase 5: CM1/CM2 Calculation Engine ⏸️ PENDING
 
 ### Phase 6: Web Dashboard ⏸️ PENDING
@@ -95,7 +95,7 @@ POP System (Advertising API) ─────────────────
 ```
 /Sp-API/
 ├── scripts/
-│   ├── pull_daily_sales.py        # Daily sales & traffic pull
+│   ├── pull_daily_sales.py        # Daily sales & traffic pull (timezone-aware)
 │   ├── pull_inventory.py          # FBA inventory (uses API)
 │   ├── pull_awd_inventory.py      # AWD inventory (uses AWD API)
 │   ├── pull_inventory_age.py      # Inventory age buckets (--fallback option)
@@ -118,51 +118,12 @@ POP System (Advertising API) ─────────────────
 │   ├── 001_materialized_views.sql # Convert views to materialized views
 │   └── 002_inventory_snapshots.sql # Monthly inventory snapshot table
 ├── .github/workflows/
-│   ├── daily-pull.yml             # 2 AM UTC - Sales & Traffic + view refresh
+│   ├── daily-pull.yml             # 4x/day - Sales & Traffic + view refresh
 │   ├── inventory-daily.yml        # 3 AM UTC - FBA + AWD + monthly snapshots
 │   ├── storage-fees-monthly.yml   # 8th of month - Storage Fees
 │   └── historical-backfill.yml    # 4x/day - Auto backfill until complete
 ├── requirements.txt
 └── CLAUDE.md
-```
-
----
-
-## API Resilience System ✅ COMPLETE
-
-All SP-API scripts use a centralized API client with automatic retry, rate limiting, and Slack alerts.
-
-**Key Features:**
-- Automatic retry with exponential backoff (1s → 2s → 4s → 8s → 16s)
-- Rate limit header parsing (`x-amzn-RateLimit-*`)
-- Transient error detection (429, 500, 502, 503, 504)
-- Checkpoint-based resume capability for partial failures
-- Slack alerts on failures → **#sp-api-alerts** channel
-
-### Core Modules
-
-| Module | Purpose |
-|--------|---------|
-| `api_client.py` | SPAPIClient - HTTP calls with retry/rate limiting |
-| `pull_tracker.py` | PullTracker - per-marketplace status, resume support |
-| `alerting.py` | AlertManager - Slack webhook notifications |
-
-### Slack Alerting ✅ CONFIGURED
-
-- **Channel**: #sp-api-alerts (ID: C0ACPAQ80KZ)
-- **App**: SP-API Alerts (App ID: A0AD4S0KFU2)
-- **GitHub Secret**: `SLACK_WEBHOOK_URL` ✅ Added
-
-Alerts are sent automatically when pulls fail after retries.
-
-### Usage
-
-```bash
-# Resume incomplete pull (default)
-python pull_daily_sales.py --resume
-
-# Start fresh
-python pull_daily_sales.py --no-resume
 ```
 
 ---
@@ -196,11 +157,14 @@ python pull_daily_sales.py --no-resume
 ## GitHub Workflows
 
 ### Daily Sales Pull (`daily-pull.yml`)
-- **Schedule**: 2 AM UTC daily
+- **Schedule**: 4x/day at 2, 8, 14, 20 UTC
 - **Modes**: `daily`, `refresh`, `both` (default)
+- **Date Logic**: Yesterday in each marketplace's timezone
+- **Re-pull**: Automatically re-pulls dates that returned 0 ASINs
 
 ```bash
 gh workflow run daily-pull.yml                         # Default: both modes
+gh workflow run daily-pull.yml -f date=2026-02-05      # Specific date
 gh workflow run daily-pull.yml -f marketplace=USA      # Single marketplace
 ```
 
@@ -212,7 +176,6 @@ gh workflow run daily-pull.yml -f marketplace=USA      # Single marketplace
 gh workflow run inventory-daily.yml                              # All types
 gh workflow run inventory-daily.yml -f report_type=inventory     # FBA only
 gh workflow run inventory-daily.yml -f report_type=awd           # AWD only
-gh workflow run inventory-daily.yml -f age_fallback=true         # Use fallback for age
 ```
 
 ### Monthly Storage Fees (`storage-fees-monthly.yml`)
@@ -223,7 +186,7 @@ gh workflow run storage-fees-monthly.yml -f month=2025-12 -f marketplace=USA
 ```
 
 ### Historical Backfill (`historical-backfill.yml`)
-- **Schedule**: Runs **4 times per day** (0, 6, 12, 18 UTC) until complete
+- **Schedule**: 4x/day at 0, 6, 12, 18 UTC until complete
 - **Modes**: `test` (7 days), `month`, `quarter`, `year`, `full` (730 days)
 - **Auto-skip**: Exits early if backfill is >99% complete
 - **Resume**: Automatically skips existing data and continues from where it left off
@@ -235,7 +198,21 @@ gh workflow run historical-backfill.yml -f mode=full   # Manual trigger
 
 ---
 
-## Marketplaces
+## Marketplace Timezones
+
+| Marketplace | Timezone | Region |
+|-------------|----------|--------|
+| USA | America/Los_Angeles (PST) | NA |
+| CA | America/Los_Angeles (PST) | NA |
+| MX | America/Los_Angeles (PST) | NA |
+| UK | Europe/London (GMT) | EU |
+| DE | Europe/Berlin (CET) | EU |
+| FR | Europe/Paris (CET) | EU |
+| IT | Europe/Rome (CET) | EU |
+| ES | Europe/Madrid (CET) | EU |
+| UAE | Asia/Dubai (GST) | EU |
+| AU | Australia/Sydney (AEST) | FE |
+| JP | Asia/Tokyo (JST) | FE |
 
 ### Currently Authorized (NA Region)
 | Country | Code | Amazon ID |
@@ -256,39 +233,29 @@ gh workflow run historical-backfill.yml -f mode=full   # Manual trigger
 # Check workflow status
 gh run list --workflow=daily-pull.yml --limit 5
 gh run list --workflow=inventory-daily.yml --limit 5
-gh run list --workflow=storage-fees-monthly.yml --limit 5
+gh run list --workflow=historical-backfill.yml --limit 5
 
 # View workflow logs
 gh run view <run_id> --log | tail -50
 
 # Manual triggers
 gh workflow run daily-pull.yml
+gh workflow run daily-pull.yml -f date=2026-02-05
 gh workflow run inventory-daily.yml -f report_type=all
-gh workflow run storage-fees-monthly.yml -f month=2025-12
 ```
 
 ```sql
 -- Check sales data coverage
 SELECT MIN(date), MAX(date), COUNT(DISTINCT date) FROM sp_daily_asin_data;
 
--- Check FBA inventory
-SELECT date, COUNT(*) as records, SUM(fulfillable_quantity) as fulfillable
-FROM sp_fba_inventory GROUP BY date ORDER BY date DESC LIMIT 5;
-
--- Check AWD inventory
-SELECT date, COUNT(*) as records,
-       SUM(total_onhand_quantity) as onhand,
-       SUM(total_inbound_quantity) as inbound
-FROM sp_awd_inventory GROUP BY date ORDER BY date DESC;
-
--- Check storage fees
-SELECT month, COUNT(*) as records,
-       ROUND(SUM(estimated_monthly_storage_fee)::numeric, 2) as total_fees,
-       currency_code
-FROM sp_storage_fees GROUP BY month, currency_code ORDER BY month DESC;
-
--- Check pull status
-SELECT * FROM sp_inventory_pulls ORDER BY started_at DESC LIMIT 10;
+-- Check recent data by marketplace
+SELECT
+    m.name as marketplace,
+    MAX(d.date) as latest_date,
+    COUNT(DISTINCT d.date) as total_days
+FROM sp_daily_asin_data d
+JOIN marketplaces m ON d.marketplace_id = m.id
+GROUP BY m.name;
 
 -- Check backfill progress
 SELECT
@@ -300,6 +267,16 @@ SELECT
 FROM sp_daily_asin_data d
 JOIN marketplaces m ON d.marketplace_id = m.id
 GROUP BY m.name;
+
+-- Check FBA inventory
+SELECT date, COUNT(*) as records, SUM(fulfillable_quantity) as fulfillable
+FROM sp_fba_inventory GROUP BY date ORDER BY date DESC LIMIT 5;
+
+-- Check pull status (find 0 ASIN pulls that need re-pull)
+SELECT pull_date, asin_count, status, started_at
+FROM sp_api_pulls
+WHERE pull_date >= CURRENT_DATE - 7
+ORDER BY started_at DESC LIMIT 20;
 
 -- Check monthly inventory snapshots
 SELECT snapshot_date, marketplace_id, COUNT(*) as skus,
@@ -313,24 +290,32 @@ ORDER BY snapshot_date DESC;
 
 ## Automation Summary
 
-All systems are now fully automated with no manual intervention required:
+All systems are fully automated with no manual intervention required:
 
 | System | Schedule | Status |
 |--------|----------|--------|
-| **Daily Sales Pull** | 2 AM UTC daily | ✅ Running |
-| **14-Day Attribution Refresh** | 2 AM UTC daily | ✅ Running |
-| **Materialized View Refresh** | After daily pull | ✅ Running |
+| **Daily Sales Pull** | 4x/day (2, 8, 14, 20 UTC) | ✅ Running |
+| **14-Day Attribution Refresh** | 4x/day (with daily pull) | ✅ Running |
+| **Materialized View Refresh** | After each daily pull | ✅ Running |
 | **FBA/AWD Inventory** | 3 AM UTC daily | ✅ Running |
 | **Monthly Inventory Snapshot** | 1st-2nd of month | ✅ Configured |
 | **Storage Fees** | 8th of month | ✅ Configured |
-| **Historical Backfill** | 4x/day until complete | 🔄 Running (~17%) |
+| **Historical Backfill** | 4x/day (0, 6, 12, 18 UTC) | 🔄 Running (~17%) |
 
-**Backfill Progress (as of Feb 5, 2026):**
-- USA: Oct 4, 2025 → Feb 3, 2026 (121 days, 16.6%)
-- Canada: Oct 4, 2025 → Feb 3, 2026 (123 days, 16.8%)
-- Mexico: Oct 5, 2025 → Feb 3, 2026 (122 days, 16.7%)
+**Backfill Progress (as of Feb 6, 2026):**
+- USA: Oct 4, 2025 → Feb 4, 2026 (~17%)
+- Canada: Oct 4, 2025 → Feb 4, 2026 (~17%)
+- Mexico: Oct 5, 2025 → Feb 4, 2026 (~17%)
 
 Estimated completion: ~4-5 more days at 4 runs/day
+
+---
+
+## Known Limitations
+
+- **Sales & Traffic Report Delay**: Amazon's Sales & Traffic report has ~12-24hr delay. Pulling "today" returns 0 ASINs. System defaults to yesterday's date.
+- **Inventory Age**: Amazon's `GET_FBA_INVENTORY_AGED_DATA` returns FATAL status. This is a known widespread issue. Fallback report works but lacks age bucket data.
+- **GitHub Timeout**: Each backfill run has 5.5-hour limit (GitHub's max is 6 hours). Fixed by running 4x/day.
 
 ---
 
@@ -345,9 +330,18 @@ Estimated completion: ~4-5 more days at 4 runs/day
 2. **Phase 5**: CM1/CM2 calculation views
 3. **Phase 6**: Web dashboard integration
 
-### Known Limitations
-- **Inventory Age**: Amazon's `GET_FBA_INVENTORY_AGED_DATA` returns FATAL status. This is a known widespread issue. Fallback report works but lacks age bucket data.
-- **GitHub Timeout**: Each backfill run has 5.5-hour limit (GitHub's max is 6 hours). Fixed by running 4x/day.
+---
+
+## GitHub Secrets
+
+| Secret | Purpose |
+|--------|---------|
+| `SP_LWA_CLIENT_ID` | Amazon SP-API credentials |
+| `SP_LWA_CLIENT_SECRET` | Amazon SP-API credentials |
+| `SP_REFRESH_TOKEN_NA` | North America refresh token |
+| `SUPABASE_URL` | Database URL |
+| `SUPABASE_SERVICE_KEY` | Database access |
+| `SLACK_WEBHOOK_URL` | Slack alerts for failures |
 
 ---
 
@@ -364,17 +358,6 @@ Estimated completion: ~4-5 more days at 4 runs/day
 | Apps Script Project | https://script.google.com/u/2/home/projects/105bgL_S41PBK6M3CBOHkZ9A9-TXL3hIPJDu5ouk_D8nBT-p-LQKUvZvb/edit |
 | Local Script Copy | `/Sp-API/google-sheets/supabase_sales.gs` |
 | Config | "Script Config" tab, rows 88-93 |
-
-### Script Config Setup (Rows 88-93)
-
-| Row | Column A | Column B | Column C |
-|-----|----------|----------|----------|
-| 88 | SUPABASE SETTINGS | | |
-| 89 | Supabase URL | All | `https://yawaopfqkkvdqtsagmng.supabase.co` |
-| 90 | Supabase Anon Key | All | (JWT token) |
-| 91 | Marketplace ID | US | `f47ac10b-58cc-4372-a567-0e02b2c3d479` |
-| 92 | Marketplace ID | CA | `a1b2c3d4-58cc-4372-a567-0e02b2c3d480` |
-| 93 | Marketplace ID | MX | `c9d0e1f2-58cc-4372-a567-0e02b2c3d488` |
 
 ### Marketplace UUIDs
 
@@ -393,70 +376,9 @@ Estimated completion: ~4-5 more days at 4 runs/day
 | Step | Status | Notes |
 |------|--------|-------|
 | Apps Script deployed | ✅ Complete | Functions: `refreshCurrentSheet`, `testConnection`, etc. |
-| Script Config (rows 88-93) | ✅ Configured | US, CA, MX marketplace IDs added |
-| Supabase connection test | ✅ **Working** | "Connection successful! Found 1 test record(s)" |
-| USA Daily data refresh | ⚠️ **Issue** | Returns "Updated 0 cells for 266 ASINs" |
-
-### Known Issue: Date/ASIN Matching
-
-**Problem:** Script connects successfully and fetches 266 ASINs from Supabase, but updates 0 cells.
-
-**Root Cause Analysis:**
-1. **Date format mismatch** - Sheet dates come from `=TRANSPOSE(Inputs!Q15:Q38)` formula (actual date objects). Script needs to convert Google Sheets date objects to `YYYY-MM-DD` format to match Supabase.
-2. **ASIN column structure** - Column C uses `=FILTER('Input products'!A3:A,...)` formulas. Script needs to read displayed values, not formulas.
-
-**Sheet Structure (USA Daily):**
-- Row 4: Date headers (4/2, 3/2, 2/2... in d/m format)
-- Column C: ASINs (via FILTER formula from "Input products" sheet)
-- Data columns start at column F
-
-### Smart Refresh System Design (AUTOMATIC)
-
-**Goal:** Automatic refresh with different frequencies based on data age.
-
-| Data Age | Refresh Frequency | Trigger |
-|----------|-------------------|---------|
-| Today | Every 4 hours | Time-based trigger |
-| Last 10 days | Once daily at 6 AM | Time-based trigger |
-| 11+ days old | Never | Data is finalized |
-
-**Implementation Plan:**
-1. Add Google Apps Script time-based triggers
-2. Store "last refresh" metadata in Script Config sheet
-3. Smart logic to only fetch what's needed based on date age
-
-### Next Session Tasks
-
-**Priority 1: Fix Date/ASIN Matching**
-1. Debug `refreshCurrentSheet` function - examine date parsing logic
-2. Fix date format conversion (Google Sheets date → YYYY-MM-DD string)
-3. Fix ASIN reading (get displayed values from FILTER formulas)
-4. Test on USA Daily sheet
-
-**Priority 2: Implement Automatic Refresh**
-1. Add time-based triggers in Apps Script:
-   - Every 4 hours: Refresh today's data
-   - Daily at 6 AM UTC: Refresh last 10 days
-2. Add refresh metadata tracking to Script Config
-3. Implement smart refresh logic (skip old finalized data)
-
-**Priority 3: Multi-Country Support**
-1. Test CA and MX marketplace data pulls
-2. Create CA Daily and MX Daily sheets (duplicate USA Daily template)
+| Supabase connection test | ✅ **Working** | Connection successful |
+| USA Daily data refresh | ⚠️ **Issue** | Date/ASIN matching needs fixing |
 
 ---
 
-## GitHub Secrets
-
-| Secret | Purpose |
-|--------|---------|
-| `SP_LWA_CLIENT_ID` | Amazon SP-API credentials |
-| `SP_LWA_CLIENT_SECRET` | Amazon SP-API credentials |
-| `SP_REFRESH_TOKEN_NA` | North America refresh token |
-| `SUPABASE_URL` | Database URL |
-| `SUPABASE_SERVICE_KEY` | Database access |
-| `SLACK_WEBHOOK_URL` | Slack alerts for failures |
-
----
-
-*Last Updated: February 5, 2026 (Session 3)*
+*Last Updated: February 6, 2026 (Session 4)*
