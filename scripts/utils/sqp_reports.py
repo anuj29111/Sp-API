@@ -642,10 +642,35 @@ def parse_scp_response(
     """
     rows = []
 
+    # Debug: log top-level keys and structure
+    logger.info(f"SCP response top-level keys: {list(report_data.keys())}")
+    if report_data:
+        for key in report_data.keys():
+            val = report_data[key]
+            if isinstance(val, list):
+                logger.info(f"  '{key}': list with {len(val)} items")
+                if val:
+                    logger.info(f"  First item keys: {list(val[0].keys()) if isinstance(val[0], dict) else type(val[0])}")
+                    if isinstance(val[0], dict):
+                        import json as _json
+                        logger.info(f"  First item sample: {_json.dumps(val[0], default=str)[:500]}")
+            elif isinstance(val, dict):
+                logger.info(f"  '{key}': dict with keys {list(val.keys())}")
+            else:
+                logger.info(f"  '{key}': {type(val).__name__} = {str(val)[:200]}")
+
     # Navigate the report structure
     asin_data = report_data.get("searchCatalogPerformanceByAsin", [])
     if not asin_data:
         asin_data = report_data.get("dataByAsin", [])
+
+    if not asin_data:
+        # Try all list-type values as potential data
+        for key, val in report_data.items():
+            if isinstance(val, list) and val and isinstance(val[0], dict):
+                logger.info(f"  Trying key '{key}' as data source ({len(val)} items)")
+                asin_data = val
+                break
 
     for item in asin_data:
         child_asin = item.get("asin") or item.get("childAsin")
