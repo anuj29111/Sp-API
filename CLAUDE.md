@@ -74,6 +74,26 @@ POP System (Advertising API) ─────────────────
 
 **Known Issue:** `GET_FBA_INVENTORY_AGED_DATA` returns FATAL status - this is a known Amazon API issue affecting many sellers. A fallback report exists but doesn't include age bucket breakdowns.
 
+### Phase 2.5: Search Query Performance (SQP/SCP) ✅ COMPLETE (Code Ready)
+
+| Data | Report Type | Status | Granularity |
+|------|-------------|--------|-------------|
+| **SQP** (per-query) | `GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT` | ✅ Code ready | Weekly, Monthly |
+| **SCP** (per-ASIN) | `GET_BRAND_ANALYTICS_SEARCH_CATALOG_PERFORMANCE_REPORT` | ✅ Code ready | Weekly, Monthly |
+
+**SQP** = Per-ASIN, per-search-query: impressions, clicks, cart adds, purchases, shares, median prices
+**SCP** = Per-ASIN aggregate: same funnel + `search_traffic_sales` (revenue) + `conversion_rate`
+
+**Key Constraints:**
+- No daily granularity — Weekly (Sun-Sat) is finest
+- 200-char ASIN limit per request (~18 ASINs per batch)
+- ~48hr data delay after period ends
+- Brand-registered ASINs only
+- ~1 createReport/min rate limit (shared with all report types)
+- Historical data available ~Dec 2023 onward (~113 weeks)
+
+**Backfill Estimate:** ~28 days at 2 periods/run, 2 runs/day
+
 ### Phase 3: Financial Reports ⏸️ PENDING
 
 | Report Type | SP-API Report | Status |
@@ -100,7 +120,9 @@ POP System (Advertising API) ─────────────────
 │   ├── pull_awd_inventory.py      # AWD inventory (uses AWD API)
 │   ├── pull_inventory_age.py      # Inventory age buckets (--fallback option)
 │   ├── pull_storage_fees.py       # Monthly storage fees
+│   ├── pull_sqp.py                # Weekly SQP/SCP search performance pull
 │   ├── backfill_historical.py     # 2-year backfill (with skip-existing)
+│   ├── backfill_sqp.py            # SQP/SCP historical backfill
 │   ├── refresh_recent.py          # Late attribution refresh
 │   ├── refresh_views.py           # Refresh materialized views
 │   ├── capture_monthly_inventory.py  # Monthly inventory snapshots
@@ -110,18 +132,22 @@ POP System (Advertising API) ─────────────────
 │       ├── alerting.py            # Slack webhook notifications
 │       ├── auth.py                # SP-API token refresh
 │       ├── reports.py             # Sales & Traffic report helpers
+│       ├── sqp_reports.py         # SQP/SCP report helpers (Brand Analytics)
 │       ├── inventory_reports.py   # Inventory report helpers
 │       ├── fba_inventory_api.py   # FBA Inventory API client
 │       ├── awd_api.py             # AWD API client
 │       └── db.py                  # Supabase operations + checkpoint functions
 ├── migrations/
 │   ├── 001_materialized_views.sql # Convert views to materialized views
-│   └── 002_inventory_snapshots.sql # Monthly inventory snapshot table
+│   ├── 002_inventory_snapshots.sql # Monthly inventory snapshot table
+│   └── 003_sqp_tables.sql         # SQP/SCP tables + pull tracking
 ├── .github/workflows/
 │   ├── daily-pull.yml             # 4x/day - Sales & Traffic + view refresh
 │   ├── inventory-daily.yml        # 3 AM UTC - FBA + AWD + monthly snapshots
 │   ├── storage-fees-monthly.yml   # 8th of month - Storage Fees
-│   └── historical-backfill.yml    # 4x/day - Auto backfill until complete
+│   ├── historical-backfill.yml    # 4x/day - Auto backfill until complete
+│   ├── sqp-weekly.yml             # Tuesdays + 4th of month - SQP/SCP pull
+│   └── sqp-backfill.yml           # 2x/day - SQP historical backfill
 ├── requirements.txt
 └── CLAUDE.md
 ```
@@ -151,6 +177,14 @@ POP System (Advertising API) ─────────────────
 | `sp_inventory_age` | Age bucket breakdown | ⚠️ Not populated (Amazon API FATAL) |
 | `sp_inventory_pulls` | Inventory pull tracking | Status, row counts, errors |
 | `sp_inventory_monthly_snapshots` | 1st-of-month inventory archive | Historical inventory by SKU |
+
+### Search Performance Tables (SQP/SCP)
+| Table | Purpose | Key Fields |
+|-------|---------|------------|
+| `sp_sqp_data` | Per-ASIN, per-search-query funnel | `search_query`, `search_query_volume`, impression/click/cart/purchase counts + shares + median prices |
+| `sp_scp_data` | Per-ASIN aggregate search funnel | Same funnel + `search_traffic_sales`, `conversion_rate` |
+| `sp_sqp_pulls` | SQP/SCP pull tracking with batch-level resume | `batch_status` JSONB, completed/failed batches |
+| `sp_sqp_asin_errors` | ASINs that fail SQP pulls | Auto-suppressed after 3 failures |
 
 ---
 
@@ -196,6 +230,33 @@ gh workflow run historical-backfill.yml -f mode=full   # Manual trigger
 # Usually no need - it runs automatically until backfill is complete
 ```
 
+### SQP/SCP Weekly Pull (`sqp-weekly.yml`)
+- **Weekly Schedule**: Every Tuesday 4 AM UTC (Sun-Sat week ended Saturday, +48hr delay)
+- **Monthly Schedule**: 4th of month 4 AM UTC (previous month, +48hr delay)
+- **Auto-detects**: Period type from schedule date (Tuesday=WEEK, 4th=MONTH)
+- **Timeout**: 150 minutes
+
+```bash
+gh workflow run sqp-weekly.yml                                              # Latest week, both reports
+gh workflow run sqp-weekly.yml -f report_type=SQP                           # SQP only
+gh workflow run sqp-weekly.yml -f period_type=MONTH                         # Monthly
+gh workflow run sqp-weekly.yml -f marketplace=USA                           # Single marketplace
+gh workflow run sqp-weekly.yml -f period_start=2026-01-26 -f period_end=2026-02-01  # Specific period
+```
+
+### SQP/SCP Backfill (`sqp-backfill.yml`)
+- **Schedule**: 2x/day at 1, 13 UTC (offset from daily pulls)
+- **Default**: 2 periods per run (~3 hours), latest-first
+- **Timeout**: 240 minutes
+- **Auto-exits**: When >99% of periods are complete
+
+```bash
+gh workflow run sqp-backfill.yml                                            # Default: 2 periods
+gh workflow run sqp-backfill.yml -f max_periods=3                           # More periods per run
+gh workflow run sqp-backfill.yml -f marketplace=MX -f report_type=SCP       # Small test
+gh workflow run sqp-backfill.yml -f start_date=2024-01-01                   # From specific date
+```
+
 ---
 
 ## Marketplace Timezones
@@ -234,6 +295,8 @@ gh workflow run historical-backfill.yml -f mode=full   # Manual trigger
 gh run list --workflow=daily-pull.yml --limit 5
 gh run list --workflow=inventory-daily.yml --limit 5
 gh run list --workflow=historical-backfill.yml --limit 5
+gh run list --workflow=sqp-weekly.yml --limit 5
+gh run list --workflow=sqp-backfill.yml --limit 5
 
 # View workflow logs
 gh run view <run_id> --log | tail -50
@@ -242,6 +305,8 @@ gh run view <run_id> --log | tail -50
 gh workflow run daily-pull.yml
 gh workflow run daily-pull.yml -f date=2026-02-05
 gh workflow run inventory-daily.yml -f report_type=all
+gh workflow run sqp-weekly.yml
+gh workflow run sqp-backfill.yml -f marketplace=MX -f report_type=SCP
 ```
 
 ```sql
@@ -284,6 +349,20 @@ SELECT snapshot_date, marketplace_id, COUNT(*) as skus,
 FROM sp_inventory_monthly_snapshots
 GROUP BY snapshot_date, marketplace_id
 ORDER BY snapshot_date DESC;
+
+-- Check SQP/SCP pull status
+SELECT report_type, period_type, period_start, period_end, status,
+       total_asins_requested, total_rows, completed_batches, total_batches
+FROM sp_sqp_pulls ORDER BY period_start DESC LIMIT 20;
+
+-- Check SQP data coverage
+SELECT period_type, MIN(period_start), MAX(period_start), COUNT(DISTINCT period_start) as periods,
+       COUNT(DISTINCT child_asin) as asins, COUNT(*) as rows
+FROM sp_sqp_data GROUP BY period_type;
+
+-- Check suppressed ASINs
+SELECT marketplace_id, child_asin, error_type, occurrence_count
+FROM sp_sqp_asin_errors WHERE suppressed = true;
 ```
 
 ---
@@ -301,6 +380,9 @@ All systems are fully automated with no manual intervention required:
 | **Monthly Inventory Snapshot** | 1st-2nd of month | ✅ Configured |
 | **Storage Fees** | 8th of month | ✅ Configured |
 | **Historical Backfill** | 4x/day (0, 6, 12, 18 UTC) | 🔄 Running (~17%) |
+| **SQP/SCP Weekly Pull** | Tuesdays 4 AM UTC | ✅ Configured |
+| **SQP/SCP Monthly Pull** | 4th of month 4 AM UTC | ✅ Configured |
+| **SQP/SCP Backfill** | 2x/day (1, 13 UTC) | ⏸️ Ready (needs first test) |
 
 **Backfill Progress (as of Feb 6, 2026):**
 - USA: Oct 4, 2025 → Feb 4, 2026 (~17%)
@@ -381,4 +463,4 @@ Estimated completion: ~4-5 more days at 4 runs/day
 
 ---
 
-*Last Updated: February 6, 2026 (Session 4)*
+*Last Updated: February 6, 2026 (Session 5 - SQP/SCP implementation)*

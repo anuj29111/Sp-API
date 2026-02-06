@@ -1,0 +1,124 @@
+name: Weekly SQP/SCP Pull
+
+on:
+  # Weekly: Every Tuesday at 4 AM UTC (Sun-Sat week ended, +48hr delay = data ready by Monday evening)
+  # Monthly: 4th of month at 4 AM UTC (month ended, +48hr delay)
+  schedule:
+    - cron: '0 4 * * 2'    # Every Tuesday
+    - cron: '0 4 4 * *'    # 4th of month
+
+  workflow_dispatch:
+    inputs:
+      report_type:
+        description: 'Report type to pull'
+        type: choice
+        options:
+          - 'both'
+          - 'SQP'
+          - 'SCP'
+        default: 'both'
+      period_type:
+        description: 'Period granularity'
+        type: choice
+        options:
+          - 'WEEK'
+          - 'MONTH'
+        default: 'WEEK'
+      period_start:
+        description: 'Period start date (YYYY-MM-DD). Leave empty for latest.'
+        required: false
+      period_end:
+        description: 'Period end date (YYYY-MM-DD). Leave empty for latest.'
+        required: false
+      marketplace:
+        description: 'Specific marketplace (e.g., USA). Leave empty for all NA.'
+        required: false
+      force:
+        description: 'Force re-pull even if data exists'
+        type: boolean
+        default: false
+
+jobs:
+  pull-sqp-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Determine period type from schedule
+        id: schedule
+        run: |
+          # If triggered by cron on 4th of month, use MONTH period type
+          DAY_OF_MONTH=$(date -u +%d)
+          DAY_OF_WEEK=$(date -u +%u)  # 1=Monday, 2=Tuesday, etc.
+
+          PERIOD_TYPE="${{ github.event.inputs.period_type }}"
+
+          if [ -z "$PERIOD_TYPE" ]; then
+            if [ "$DAY_OF_MONTH" = "04" ]; then
+              PERIOD_TYPE="MONTH"
+            else
+              PERIOD_TYPE="WEEK"
+            fi
+          fi
+
+          echo "period_type=$PERIOD_TYPE" >> $GITHUB_OUTPUT
+
+      - name: Pull SQP/SCP data
+        env:
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+          SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          CMD="python scripts/pull_sqp.py --resume"
+
+          # Report type
+          REPORT_TYPE="${{ github.event.inputs.report_type }}"
+          if [ -n "$REPORT_TYPE" ] && [ "$REPORT_TYPE" != "both" ]; then
+            CMD="$CMD --report-type $REPORT_TYPE"
+          fi
+
+          # Period type
+          PERIOD_TYPE="${{ steps.schedule.outputs.period_type }}"
+          CMD="$CMD --period-type $PERIOD_TYPE"
+
+          # Period dates (manual override)
+          if [ -n "${{ github.event.inputs.period_start }}" ]; then
+            CMD="$CMD --period-start ${{ github.event.inputs.period_start }} --period-end ${{ github.event.inputs.period_end }}"
+          fi
+
+          # Marketplace
+          if [ -n "${{ github.event.inputs.marketplace }}" ]; then
+            CMD="$CMD --marketplace ${{ github.event.inputs.marketplace }}"
+          fi
+
+          # Force
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            CMD="$CMD --force"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
+
+      - name: Post summary
+        if: always()
+        run: |
+          echo "## SQP/SCP Weekly Pull Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Period Type:** ${{ steps.schedule.outputs.period_type }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Report Type:** ${{ github.event.inputs.report_type || 'both' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY

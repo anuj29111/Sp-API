@@ -1,0 +1,97 @@
+name: SQP Historical Backfill
+
+on:
+  # Run 2x/day offset from daily pulls (which run at 2, 8, 14, 20 UTC)
+  schedule:
+    - cron: '0 1,13 * * *'
+
+  workflow_dispatch:
+    inputs:
+      max_periods:
+        description: 'Max periods to process per run'
+        required: false
+        default: '2'
+      report_type:
+        description: 'Report type'
+        type: choice
+        options:
+          - 'both'
+          - 'SQP'
+          - 'SCP'
+        default: 'both'
+      period_type:
+        description: 'Period granularity'
+        type: choice
+        options:
+          - 'WEEK'
+          - 'MONTH'
+        default: 'WEEK'
+      marketplace:
+        description: 'Specific marketplace (e.g., USA)'
+        required: false
+      start_date:
+        description: 'Backfill start date (YYYY-MM-DD)'
+        required: false
+
+jobs:
+  sqp-backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run SQP backfill
+        env:
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+          SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          CMD="python scripts/backfill_sqp.py"
+
+          MAX_PERIODS="${{ github.event.inputs.max_periods }}"
+          MAX_PERIODS="${MAX_PERIODS:-2}"
+          CMD="$CMD --max-periods $MAX_PERIODS"
+
+          REPORT_TYPE="${{ github.event.inputs.report_type }}"
+          if [ -n "$REPORT_TYPE" ] && [ "$REPORT_TYPE" != "both" ]; then
+            CMD="$CMD --report-type $REPORT_TYPE"
+          fi
+
+          PERIOD_TYPE="${{ github.event.inputs.period_type }}"
+          if [ -n "$PERIOD_TYPE" ]; then
+            CMD="$CMD --period-type $PERIOD_TYPE"
+          fi
+
+          if [ -n "${{ github.event.inputs.marketplace }}" ]; then
+            CMD="$CMD --marketplace ${{ github.event.inputs.marketplace }}"
+          fi
+
+          if [ -n "${{ github.event.inputs.start_date }}" ]; then
+            CMD="$CMD --start-date ${{ github.event.inputs.start_date }}"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
+
+      - name: Post summary
+        if: always()
+        run: |
+          echo "## SQP Backfill Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Max Periods:** ${{ github.event.inputs.max_periods || '2' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Report Type:** ${{ github.event.inputs.report_type || 'both' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
