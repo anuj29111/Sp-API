@@ -543,6 +543,13 @@ def parse_sqp_response(
 
     asin_data = report_data.get("dataByAsin", [])
 
+    # Debug: log actual field names in nested objects (first item only)
+    if asin_data:
+        first = asin_data[0]
+        for key in ("impressionData", "clickData", "cartAddData", "purchaseData"):
+            sub = first.get(key) or {}
+            logger.info(f"SQP {key} keys: {sorted(sub.keys())}")
+
     for item in asin_data:
         child_asin = item.get("asin") or item.get("childAsin")
         if not child_asin:
