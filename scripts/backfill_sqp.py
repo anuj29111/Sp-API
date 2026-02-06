@@ -61,8 +61,8 @@ logger = logging.getLogger(__name__)
 # Default backfill start: Dec 2023 (SQP data generally available from here)
 DEFAULT_BACKFILL_START = date(2023, 12, 3)  # First Sunday in Dec 2023
 
-# North America marketplaces
-NA_MARKETPLACES = ["USA", "CA", "MX"]
+# North America marketplaces (MX excluded - Brand Analytics not available)
+NA_MARKETPLACES = ["USA", "CA"]
 
 # Token refresh interval (30 minutes)
 TOKEN_REFRESH_INTERVAL = 30 * 60

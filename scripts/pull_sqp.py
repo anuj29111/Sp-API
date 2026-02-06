@@ -63,8 +63,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# North America marketplaces
-NA_MARKETPLACES = ["USA", "CA", "MX"]
+# North America marketplaces (MX excluded - Brand Analytics not available)
+NA_MARKETPLACES = ["USA", "CA"]
 
 
 def pull_for_marketplace(
