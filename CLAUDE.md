@@ -81,15 +81,21 @@ POP System (Advertising API) ─────────────────
 
 **Known Issue:** `GET_FBA_INVENTORY_AGED_DATA` returns FATAL status - this is a known Amazon API issue affecting many sellers. A fallback report exists but doesn't include age bucket breakdowns.
 
-### Phase 2.5: Search Query Performance (SQP/SCP) ✅ COMPLETE (Code Ready)
+### Phase 2.5: Search Query Performance (SQP/SCP) ✅ COMPLETE & VERIFIED
 
 | Data | Report Type | Status | Granularity |
 |------|-------------|--------|-------------|
-| **SQP** (per-query) | `GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT` | ✅ Code ready | Weekly, Monthly |
-| **SCP** (per-ASIN) | `GET_BRAND_ANALYTICS_SEARCH_CATALOG_PERFORMANCE_REPORT` | ✅ Code ready | Weekly, Monthly |
+| **SQP** (per-query) | `GET_BRAND_ANALYTICS_SEARCH_QUERY_PERFORMANCE_REPORT` | ✅ Working | Weekly, Monthly |
+| **SCP** (per-ASIN) | `GET_BRAND_ANALYTICS_SEARCH_CATALOG_PERFORMANCE_REPORT` | ✅ Working | Weekly, Monthly |
 
 **SQP** = Per-ASIN, per-search-query: impressions, clicks, cart adds, purchases, shares, median prices
 **SCP** = Per-ASIN aggregate: same funnel + `search_traffic_sales` (revenue) + `conversion_rate`
+
+**Verified Test Results (Feb 6, 2026):**
+- CA SQP: 3,538 rows, 138 ASINs, 2,629 queries, 10/10 batches
+- CA SCP: 154 rows, 10/10 batches, all metrics populated
+
+**Marketplaces:** USA + CA only (MX excluded - Brand Analytics not available)
 
 **Key Constraints:**
 - No daily granularity — Weekly (Sun-Sat) is finest
@@ -518,9 +524,9 @@ All systems are fully automated with no manual intervention required:
 | **Monthly Inventory Snapshot** | 1st-2nd of month | ✅ Configured |
 | **Storage Fees** | 5th of month | ✅ Configured |
 | **Historical Backfill** | 4x/day (0, 6, 12, 18 UTC) | 🔄 Running |
-| **SQP/SCP Weekly Pull** | Tuesdays 4 AM UTC | ✅ Configured |
+| **SQP/SCP Weekly Pull** | Tuesdays 4 AM UTC | ✅ Verified & Running |
 | **SQP/SCP Monthly Pull** | 4th of month 4 AM UTC | ✅ Configured |
-| **SQP/SCP Backfill** | 2x/day (1, 13 UTC) | ⏸️ Ready (needs first test) |
+| **SQP/SCP Backfill** | 2x/day (1, 13 UTC) | ✅ Ready to enable |
 | **Settlement Reports** | Tuesdays 7 AM UTC | ✅ Configured (needs first test) |
 | **Settlement Backfill** | Manual trigger | ⏸️ Ready (target: Jan 2024) |
 | **Reimbursements** | Mondays 6 AM UTC | ✅ Configured (needs first test) |
@@ -605,4 +611,4 @@ All systems are fully automated with no manual intervention required:
 
 ---
 
-*Last Updated: February 6, 2026 (Session 6 - Phase 3 Financial Reports implementation)*
+*Last Updated: February 6, 2026 (Session 7 - SQP/SCP verified & working)*
