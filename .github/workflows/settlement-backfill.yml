@@ -1,0 +1,58 @@
+name: Settlement Report Backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Backfill since date (YYYY-MM-DD). Default: 2024-01-01'
+        required: false
+        type: string
+        default: '2024-01-01'
+      marketplace:
+        description: 'Marketplace (leave empty for all NA)'
+        required: false
+        type: string
+      dry_run:
+        description: 'Dry run (no DB writes)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  backfill-settlements:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Backfill Settlement Reports
+        env:
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+          SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          cd scripts
+          ARGS=""
+          if [ -n "${{ github.event.inputs.since }}" ]; then
+            ARGS="$ARGS --since ${{ github.event.inputs.since }}"
+          fi
+          if [ -n "${{ github.event.inputs.marketplace }}" ]; then
+            ARGS="$ARGS --marketplace ${{ github.event.inputs.marketplace }}"
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          python backfill_settlements.py $ARGS

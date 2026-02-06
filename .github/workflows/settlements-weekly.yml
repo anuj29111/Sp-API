@@ -1,0 +1,61 @@
+name: Weekly Settlement Reports Pull
+
+on:
+  schedule:
+    # Run every Tuesday at 7 AM UTC
+    # Settlements are generated ~every 2 weeks, weekly pull ensures we catch them
+    - cron: '0 7 * * 2'
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Pull reports since date (YYYY-MM-DD). Default: last 30 days.'
+        required: false
+        type: string
+      marketplace:
+        description: 'Marketplace (leave empty for all NA)'
+        required: false
+        type: string
+      dry_run:
+        description: 'Dry run (no DB writes)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  pull-settlements:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Pull Settlement Reports
+        env:
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+          SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          cd scripts
+          ARGS=""
+          if [ -n "${{ github.event.inputs.since }}" ]; then
+            ARGS="$ARGS --since ${{ github.event.inputs.since }}"
+          fi
+          if [ -n "${{ github.event.inputs.marketplace }}" ]; then
+            ARGS="$ARGS --marketplace ${{ github.event.inputs.marketplace }}"
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          python pull_settlements.py $ARGS
