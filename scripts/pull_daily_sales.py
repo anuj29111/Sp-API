@@ -12,7 +12,7 @@ Features:
 - Slack alerts on failures (if SLACK_WEBHOOK_URL is set)
 
 Usage:
-    python pull_daily_sales.py                    # Pull yesterday's data for all NA marketplaces
+    python pull_daily_sales.py                    # Pull yesterday's data for all NA marketplaces (default)
     python pull_daily_sales.py --date 2026-02-01  # Pull specific date
     python pull_daily_sales.py --marketplace USA  # Pull specific marketplace only
     python pull_daily_sales.py --days-ago 2       # Pull data from 2 days ago
@@ -328,13 +328,13 @@ def main():
     parser.add_argument(
         "--date",
         type=str,
-        help="Date to pull (YYYY-MM-DD format). Defaults to 2 days ago."
+        help="Date to pull (YYYY-MM-DD format). Defaults to yesterday."
     )
     parser.add_argument(
         "--days-ago",
         type=int,
-        default=2,
-        help="Number of days ago to pull. Default: 2 (Amazon data delay)"
+        default=1,
+        help="Number of days ago to pull. Default: 1 (yesterday)"
     )
     parser.add_argument(
         "--marketplace",

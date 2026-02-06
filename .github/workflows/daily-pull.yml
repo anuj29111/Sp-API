@@ -1,7 +1,7 @@
 name: Daily SP-API Sales Pull
 
 on:
-  # Run daily at 2 AM UTC (data available ~34 hours after day ends)
+  # Run daily at 2 AM UTC (pulls yesterday's data, which is complete by then)
   schedule:
     - cron: '0 2 * * *'
 
@@ -114,6 +114,6 @@ jobs:
           echo "## SP-API Daily Pull Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Mode:** ${{ github.event.inputs.mode || 'both' }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Date:** $(date -d '2 days ago' +%Y-%m-%d)" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date -d 'yesterday' +%Y-%m-%d)" >> $GITHUB_STEP_SUMMARY
           echo "**Refresh Days:** ${{ github.event.inputs.refresh_days || '14' }}" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
