@@ -149,15 +149,20 @@ def pull_marketplace_data(
         tracker.start_marketplace(marketplace_code)
 
     try:
-        # Check if already pulled
+        # Check if already pulled (only skip if we have actual data)
         if skip_existing:
             existing = get_existing_pull(marketplace_code, report_date)
             if existing and existing.get("status") == "completed":
-                print(f"⏭️  {marketplace_code} {report_date} already pulled, skipping")
-                result["status"] = "skipped"
-                if tracker:
-                    tracker.complete_marketplace(marketplace_code, 0)
-                return result
+                asin_count = existing.get("asin_count", 0)
+                if asin_count > 0:
+                    print(f"⏭️  {marketplace_code} {report_date} already pulled ({asin_count} ASINs), skipping")
+                    result["status"] = "skipped"
+                    result["asin_count"] = asin_count
+                    if tracker:
+                        tracker.complete_marketplace(marketplace_code, asin_count)
+                    return result
+                else:
+                    print(f"🔄 {marketplace_code} {report_date} has 0 ASINs, re-pulling...")
 
         print(f"\n{'='*50}")
         print(f"📊 Pulling {marketplace_code} data for {report_date}")
