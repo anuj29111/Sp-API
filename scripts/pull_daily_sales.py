@@ -379,13 +379,13 @@ def main():
     parser.add_argument(
         "--date",
         type=str,
-        help="Date to pull (YYYY-MM-DD format). If not specified, uses each marketplace's current date."
+        help="Date to pull (YYYY-MM-DD format). If not specified, uses yesterday in each marketplace's timezone."
     )
     parser.add_argument(
         "--days-ago",
         type=int,
-        default=0,
-        help="Number of days ago to pull. Default: 0 (today in each marketplace's timezone)"
+        default=1,
+        help="Number of days ago to pull. Default: 1 (yesterday - Sales & Traffic report has ~12-24hr delay)"
     )
     parser.add_argument(
         "--marketplace",
