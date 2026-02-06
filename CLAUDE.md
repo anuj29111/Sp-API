@@ -35,7 +35,7 @@ POP System (Advertising API) ─────────────────
 | Component | Status |
 |-----------|--------|
 | GitHub Repo | ✅ https://github.com/anuj29111/Sp-API |
-| Daily Pull | ✅ Running at 2 AM UTC |
+| Daily Pull | ✅ Running 4x/day (2, 8, 14, 20 UTC) |
 | Late Attribution Refresh | ✅ Refreshes last 14 days |
 | Database Tables | ✅ `sp_daily_asin_data`, `sp_api_pulls` |
 | Views | ✅ Weekly, Monthly, Rolling metrics (MATERIALIZED) |
