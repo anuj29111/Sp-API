@@ -12,6 +12,13 @@ Build a complete **Contribution Margin (CM1/CM2) profitability system** by pulli
 - **CM1** = Revenue - FBA Fees - COGS (gross profit before ads)
 - **CM2** = CM1 - Ad Spend - Storage (net operating profit)
 
+**CM2 Formula Breakdown:**
+```
+Net Revenue = Gross Sales - Returns/Refunds
+CM1 = Net Revenue - Referral Fees - FBA Fees - COGS
+CM2 = CM1 - Ad Spend - Storage Fees + Reimbursements
+```
+
 ---
 
 ## Architecture
@@ -39,7 +46,7 @@ POP System (Advertising API) ─────────────────
 | Late Attribution Refresh | ✅ Refreshes last 14 days |
 | Database Tables | ✅ `sp_daily_asin_data`, `sp_api_pulls` |
 | Views | ✅ Weekly, Monthly, Rolling metrics (MATERIALIZED) |
-| Backfill | 🔄 Oct 4, 2025 → Feb 3, 2026 (~123 days, 17%) - Auto-running 4x/day |
+| Backfill | 🔄 Auto-running 4x/day |
 | NA Authorization | ✅ USA, CA, MX working |
 
 **Data Available:**
@@ -94,13 +101,27 @@ POP System (Advertising API) ─────────────────
 
 **Backfill Estimate:** ~28 days at 2 periods/run, 2 runs/day
 
-### Phase 3: Financial Reports ⏸️ PENDING
+### Phase 3: Financial Reports ✅ COMPLETE (Code Ready, Needs First Test)
 
-| Report Type | SP-API Report | Status |
-|-------------|---------------|--------|
-| Storage Fees | `GET_FBA_STORAGE_FEE_CHARGES_DATA` | ✅ Working (Phase 2) |
-| Reimbursements | `GET_FBA_REIMBURSEMENTS_DATA` | ⏸️ Not started |
-| Settlement Reports | Various | ⏸️ Not started |
+**PRIMARY for CM2**: Settlement Reports contain **actual fees Amazon charged per order** — not estimates.
+
+| Report Type | SP-API Report | Script | Status |
+|-------------|---------------|--------|--------|
+| **Settlement Reports** | `GET_V2_SETTLEMENT_REPORT_DATA_FLAT_FILE_V2` | `pull_settlements.py` / `backfill_settlements.py` | ✅ Code ready |
+| **Reimbursements** | `GET_FBA_REIMBURSEMENTS_DATA` | `pull_reimbursements.py` | ✅ Code ready |
+| **FBA Fee Estimates** | `GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA` | `pull_fba_fees.py` | ✅ Code ready |
+| **Storage Fees** | `GET_FBA_STORAGE_FEE_CHARGES_DATA` | `pull_storage_fees.py` | ✅ Working (Phase 2) |
+
+**Settlement Report Details (most important):**
+- Contains per-order transaction-level fee breakdowns: Commission, FBA fulfillment, refunds, promotions, shipping income
+- Amazon auto-generates every ~2 weeks → Pattern: LIST available → DOWNLOAD each (not create-poll-download)
+- Deduplication via MD5 hash of 11 key fields (no row-level unique ID from Amazon)
+- Backfill target: Jan 2024 onward (~156 reports across 3 marketplaces)
+
+**FBA Fee Estimates (secondary):**
+- Shows CURRENT fees per ASIN — for projections only, NOT historical CM2
+- `dataStartTime` must be 72+ hours prior
+- Refreshed daily to track fee changes
 
 ### Phase 4: Product Master Data ⏸️ PENDING
 
@@ -121,8 +142,12 @@ POP System (Advertising API) ─────────────────
 │   ├── pull_inventory_age.py      # Inventory age buckets (--fallback option)
 │   ├── pull_storage_fees.py       # Monthly storage fees
 │   ├── pull_sqp.py                # Weekly SQP/SCP search performance pull
-│   ├── backfill_historical.py     # 2-year backfill (with skip-existing)
+│   ├── pull_settlements.py        # Weekly settlement report pull (LIST → DOWNLOAD)
+│   ├── pull_reimbursements.py     # Weekly reimbursement report pull
+│   ├── pull_fba_fees.py           # Daily FBA fee estimates pull
+│   ├── backfill_historical.py     # 2-year sales backfill (with skip-existing)
 │   ├── backfill_sqp.py            # SQP/SCP historical backfill
+│   ├── backfill_settlements.py    # Settlement backfill to Jan 2024
 │   ├── refresh_recent.py          # Late attribution refresh
 │   ├── refresh_views.py           # Refresh materialized views
 │   ├── capture_monthly_inventory.py  # Monthly inventory snapshots
@@ -134,20 +159,26 @@ POP System (Advertising API) ─────────────────
 │       ├── reports.py             # Sales & Traffic report helpers
 │       ├── sqp_reports.py         # SQP/SCP report helpers (Brand Analytics)
 │       ├── inventory_reports.py   # Inventory report helpers
+│       ├── financial_reports.py   # Settlement, Reimbursement, FBA Fee helpers
 │       ├── fba_inventory_api.py   # FBA Inventory API client
 │       ├── awd_api.py             # AWD API client
-│       └── db.py                  # Supabase operations + checkpoint functions
+│       └── db.py                  # Supabase operations (all tables)
 ├── migrations/
 │   ├── 001_materialized_views.sql # Convert views to materialized views
 │   ├── 002_inventory_snapshots.sql # Monthly inventory snapshot table
-│   └── 003_sqp_tables.sql         # SQP/SCP tables + pull tracking
+│   ├── 003_sqp_tables.sql         # SQP/SCP tables + pull tracking
+│   └── 004_financial_tables.sql   # Settlement, Reimbursement, FBA Fee tables (applied via MCP)
 ├── .github/workflows/
 │   ├── daily-pull.yml             # 4x/day - Sales & Traffic + view refresh
 │   ├── inventory-daily.yml        # 3 AM UTC - FBA + AWD + monthly snapshots
-│   ├── storage-fees-monthly.yml   # 8th of month - Storage Fees
+│   ├── storage-fees-monthly.yml   # 5th of month - Storage Fees
 │   ├── historical-backfill.yml    # 4x/day - Auto backfill until complete
 │   ├── sqp-weekly.yml             # Tuesdays + 4th of month - SQP/SCP pull
-│   └── sqp-backfill.yml           # 2x/day - SQP historical backfill
+│   ├── sqp-backfill.yml           # 2x/day - SQP historical backfill
+│   ├── settlements-weekly.yml     # Tuesdays 7 AM UTC - Settlement reports
+│   ├── settlement-backfill.yml    # Manual - Backfill settlements to Jan 2024
+│   ├── reimbursements-weekly.yml  # Mondays 6 AM UTC - Reimbursement reports
+│   └── financial-daily.yml        # Daily 5 AM UTC - FBA fee estimates
 ├── requirements.txt
 └── CLAUDE.md
 ```
@@ -186,6 +217,15 @@ POP System (Advertising API) ─────────────────
 | `sp_sqp_pulls` | SQP/SCP pull tracking with batch-level resume | `batch_status` JSONB, completed/failed batches |
 | `sp_sqp_asin_errors` | ASINs that fail SQP pulls | Auto-suppressed after 3 failures |
 
+### Financial Tables (Phase 3)
+| Table | Purpose | Unique On | Key Fields |
+|-------|---------|-----------|------------|
+| `sp_settlement_transactions` | Per-order transaction fees (PRIMARY for CM2) | `(marketplace_id, settlement_id, row_hash)` | `transaction_type`, `amount_type`, `amount_description`, `amount`, `posted_date_time`, `sku`, `order_id` |
+| `sp_settlement_summaries` | One per settlement period | `(marketplace_id, settlement_id)` | `settlement_start_date`, `settlement_end_date`, `total_amount`, `currency_code` |
+| `sp_reimbursements` | Per-SKU reimbursement records | `(marketplace_id, reimbursement_id)` | `reason`, `amount_total`, `sku`, `asin`, `quantity_reimbursed_*` |
+| `sp_fba_fee_estimates` | Current fee estimates per ASIN | `(marketplace_id, sku)` | `estimated_fee_total`, `estimated_referral_fee_per_unit`, `estimated_pick_pack_fee_per_unit`, `product_size_tier` |
+| `sp_financial_pulls` | Pull tracking for all financial reports | Auto-increment | `report_type`, `settlement_id`, `status`, `row_count` |
+
 ---
 
 ## GitHub Workflows
@@ -213,7 +253,7 @@ gh workflow run inventory-daily.yml -f report_type=awd           # AWD only
 ```
 
 ### Monthly Storage Fees (`storage-fees-monthly.yml`)
-- **Schedule**: 8th of month (data available ~7 days after month end)
+- **Schedule**: 5th of month (data available ~7 days after month end)
 
 ```bash
 gh workflow run storage-fees-monthly.yml -f month=2025-12 -f marketplace=USA
@@ -257,6 +297,52 @@ gh workflow run sqp-backfill.yml -f marketplace=MX -f report_type=SCP       # Sm
 gh workflow run sqp-backfill.yml -f start_date=2024-01-01                   # From specific date
 ```
 
+### Settlement Reports Weekly (`settlements-weekly.yml`)
+- **Schedule**: Every Tuesday 7 AM UTC
+- **Pattern**: LIST available reports → DOWNLOAD each → Parse TSV → Upsert
+- **Auto-skip**: Already-processed settlement IDs are skipped
+
+```bash
+gh workflow run settlements-weekly.yml                                      # Last 30 days, all NA
+gh workflow run settlements-weekly.yml -f since=2026-01-01                   # Since specific date
+gh workflow run settlements-weekly.yml -f marketplace=USA --dry-run          # Test
+```
+
+### Settlement Backfill (`settlement-backfill.yml`)
+- **Trigger**: Manual only
+- **Default**: Since Jan 2024 (matching GorillaROI history)
+- **Timeout**: 120 minutes
+- **Auto-skip**: Already-processed settlements skipped (idempotent)
+
+```bash
+gh workflow run settlement-backfill.yml                                     # Default: since 2024-01-01
+gh workflow run settlement-backfill.yml -f since=2025-01-01                 # Custom start
+gh workflow run settlement-backfill.yml -f marketplace=USA                  # Single marketplace
+gh workflow run settlement-backfill.yml -f dry_run=true                     # Test first
+```
+
+### Reimbursements Weekly (`reimbursements-weekly.yml`)
+- **Schedule**: Every Monday 6 AM UTC
+- **Default window**: Last 60 days (overlapping ensures nothing missed)
+- **Pattern**: CREATE → POLL → DOWNLOAD (standard report)
+
+```bash
+gh workflow run reimbursements-weekly.yml                                   # Last 60 days, all NA
+gh workflow run reimbursements-weekly.yml -f start_date=2024-01-01          # Backfill
+gh workflow run reimbursements-weekly.yml -f marketplace=USA                # Single marketplace
+```
+
+### FBA Fee Estimates Daily (`financial-daily.yml`)
+- **Schedule**: Daily 5 AM UTC
+- **Note**: Shows CURRENT fees only (for projections, not historical CM2)
+- **Limitation**: Can only be requested once/day per seller
+
+```bash
+gh workflow run financial-daily.yml                                         # All NA marketplaces
+gh workflow run financial-daily.yml -f marketplace=USA                      # Single marketplace
+gh workflow run financial-daily.yml -f dry_run=true                         # Test
+```
+
 ---
 
 ## Marketplace Timezones
@@ -297,6 +383,10 @@ gh run list --workflow=inventory-daily.yml --limit 5
 gh run list --workflow=historical-backfill.yml --limit 5
 gh run list --workflow=sqp-weekly.yml --limit 5
 gh run list --workflow=sqp-backfill.yml --limit 5
+gh run list --workflow=settlements-weekly.yml --limit 5
+gh run list --workflow=settlement-backfill.yml --limit 5
+gh run list --workflow=reimbursements-weekly.yml --limit 5
+gh run list --workflow=financial-daily.yml --limit 5
 
 # View workflow logs
 gh run view <run_id> --log | tail -50
@@ -307,6 +397,10 @@ gh workflow run daily-pull.yml -f date=2026-02-05
 gh workflow run inventory-daily.yml -f report_type=all
 gh workflow run sqp-weekly.yml
 gh workflow run sqp-backfill.yml -f marketplace=MX -f report_type=SCP
+gh workflow run settlements-weekly.yml
+gh workflow run settlement-backfill.yml -f dry_run=true
+gh workflow run reimbursements-weekly.yml -f start_date=2024-01-01
+gh workflow run financial-daily.yml
 ```
 
 ```sql
@@ -363,6 +457,50 @@ FROM sp_sqp_data GROUP BY period_type;
 -- Check suppressed ASINs
 SELECT marketplace_id, child_asin, error_type, occurrence_count
 FROM sp_sqp_asin_errors WHERE suppressed = true;
+
+-- Check settlement data
+SELECT
+    m.name as marketplace,
+    COUNT(DISTINCT settlement_id) as settlements,
+    COUNT(*) as transactions,
+    MIN(posted_date_time) as earliest,
+    MAX(posted_date_time) as latest
+FROM sp_settlement_transactions t
+JOIN marketplaces m ON t.marketplace_id = m.id
+GROUP BY m.name;
+
+-- Check settlement summaries
+SELECT settlement_id, settlement_start_date, settlement_end_date,
+       total_amount, currency_code
+FROM sp_settlement_summaries
+ORDER BY settlement_end_date DESC LIMIT 10;
+
+-- Check financial pull tracking
+SELECT report_type, status, COUNT(*) as pulls,
+       SUM(row_count) as total_rows
+FROM sp_financial_pulls
+GROUP BY report_type, status;
+
+-- Check reimbursements
+SELECT
+    m.name as marketplace,
+    COUNT(*) as records,
+    SUM(amount_total) as total_reimbursed,
+    MIN(approval_date) as earliest,
+    MAX(approval_date) as latest
+FROM sp_reimbursements r
+JOIN marketplaces m ON r.marketplace_id = m.id
+GROUP BY m.name;
+
+-- Check FBA fee estimates
+SELECT
+    m.name as marketplace,
+    COUNT(*) as skus,
+    AVG(estimated_fee_total) as avg_total_fee,
+    MAX(pull_date) as last_updated
+FROM sp_fba_fee_estimates f
+JOIN marketplaces m ON f.marketplace_id = m.id
+GROUP BY m.name;
 ```
 
 ---
@@ -378,18 +516,15 @@ All systems are fully automated with no manual intervention required:
 | **Materialized View Refresh** | After each daily pull | ✅ Running |
 | **FBA/AWD Inventory** | 3 AM UTC daily | ✅ Running |
 | **Monthly Inventory Snapshot** | 1st-2nd of month | ✅ Configured |
-| **Storage Fees** | 8th of month | ✅ Configured |
-| **Historical Backfill** | 4x/day (0, 6, 12, 18 UTC) | 🔄 Running (~17%) |
+| **Storage Fees** | 5th of month | ✅ Configured |
+| **Historical Backfill** | 4x/day (0, 6, 12, 18 UTC) | 🔄 Running |
 | **SQP/SCP Weekly Pull** | Tuesdays 4 AM UTC | ✅ Configured |
 | **SQP/SCP Monthly Pull** | 4th of month 4 AM UTC | ✅ Configured |
 | **SQP/SCP Backfill** | 2x/day (1, 13 UTC) | ⏸️ Ready (needs first test) |
-
-**Backfill Progress (as of Feb 6, 2026):**
-- USA: Oct 4, 2025 → Feb 4, 2026 (~17%)
-- Canada: Oct 4, 2025 → Feb 4, 2026 (~17%)
-- Mexico: Oct 5, 2025 → Feb 4, 2026 (~17%)
-
-Estimated completion: ~4-5 more days at 4 runs/day
+| **Settlement Reports** | Tuesdays 7 AM UTC | ✅ Configured (needs first test) |
+| **Settlement Backfill** | Manual trigger | ⏸️ Ready (target: Jan 2024) |
+| **Reimbursements** | Mondays 6 AM UTC | ✅ Configured (needs first test) |
+| **FBA Fee Estimates** | Daily 5 AM UTC | ✅ Configured (needs first test) |
 
 ---
 
@@ -398,19 +533,26 @@ Estimated completion: ~4-5 more days at 4 runs/day
 - **Sales & Traffic Report Delay**: Amazon's Sales & Traffic report has ~12-24hr delay. Pulling "today" returns 0 ASINs. System defaults to yesterday's date.
 - **Inventory Age**: Amazon's `GET_FBA_INVENTORY_AGED_DATA` returns FATAL status. This is a known widespread issue. Fallback report works but lacks age bucket data.
 - **GitHub Timeout**: Each backfill run has 5.5-hour limit (GitHub's max is 6 hours). Fixed by running 4x/day.
+- **Settlement Report Uniqueness**: Amazon provides no row-level unique ID — system uses MD5 hash of 11 key fields for deduplication.
+- **FBA Fee Estimates**: Only show CURRENT fees, not historical. Settlement reports are the source of truth for historical fee data.
 
 ---
 
 ## Pending Tasks
 
-### Next Priority: Phase 3 - Financial Reports
-1. **Reimbursement Reports** - `GET_FBA_REIMBURSEMENTS_DATA`
-2. **Settlement Reports** - For promotions, shipping income
+### Next Priority: Phase 4 - Product Master Data
+1. **Product master table** for COGS/FBA fees (manual entry initially via Google Sheets)
+2. Map SKU → ASIN → COGS for CM1 calculation
 
 ### Future Phases
-1. **Phase 4**: Product master table for COGS/FBA fees (manual entry initially)
-2. **Phase 5**: CM1/CM2 calculation views
-3. **Phase 6**: Web dashboard integration
+1. **Phase 5**: CM1/CM2 calculation views (combine settlements + COGS + ad spend)
+2. **Phase 6**: Web dashboard integration
+
+### Immediate Testing Needed
+1. Run `settlement-backfill.yml` with `dry_run=true` to verify settlement listing works
+2. Run live with `since=2026-01-01` for recent data first
+3. Full backfill with `since=2024-01-01`
+4. Test `reimbursements-weekly.yml` and `financial-daily.yml`
 
 ---
 
@@ -463,4 +605,4 @@ Estimated completion: ~4-5 more days at 4 runs/day
 
 ---
 
-*Last Updated: February 6, 2026 (Session 5 - SQP/SCP implementation)*
+*Last Updated: February 6, 2026 (Session 6 - Phase 3 Financial Reports implementation)*
