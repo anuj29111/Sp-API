@@ -12,10 +12,10 @@ Features:
 - Slack alerts on failures (if SLACK_WEBHOOK_URL is set)
 
 Usage:
-    python pull_daily_sales.py                    # Pull yesterday's data for all NA marketplaces (default)
+    python pull_daily_sales.py                    # Pull today's data for all NA marketplaces (timezone-aware)
     python pull_daily_sales.py --date 2026-02-01  # Pull specific date
     python pull_daily_sales.py --marketplace USA  # Pull specific marketplace only
-    python pull_daily_sales.py --days-ago 2       # Pull data from 2 days ago
+    python pull_daily_sales.py --days-ago 1       # Pull data from 1 day ago
     python pull_daily_sales.py --resume           # Resume incomplete pull
 
 Environment Variables Required:
@@ -35,7 +35,8 @@ import sys
 import argparse
 import time
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import List, Optional
 
 # Add parent directory to path for imports
@@ -74,6 +75,40 @@ MARKETPLACES_BY_REGION = {
     "EU": ["UK", "DE", "FR", "IT", "ES", "UAE"],
     "FE": ["AU", "JP"]
 }
+
+# Marketplace timezones for calculating "today" in each marketplace
+# Amazon uses PST for NA, GMT for EU, JST for FE
+MARKETPLACE_TIMEZONES = {
+    "USA": "America/Los_Angeles",   # PST/PDT
+    "CA": "America/Los_Angeles",    # Amazon uses PST for NA
+    "MX": "America/Los_Angeles",    # Amazon uses PST for NA
+    "UK": "Europe/London",          # GMT/BST
+    "DE": "Europe/Berlin",          # CET
+    "FR": "Europe/Paris",           # CET
+    "IT": "Europe/Rome",            # CET
+    "ES": "Europe/Madrid",          # CET
+    "UAE": "Asia/Dubai",            # GST (no DST)
+    "AU": "Australia/Sydney",       # AEST
+    "JP": "Asia/Tokyo",             # JST
+}
+
+
+def get_marketplace_date(marketplace_code: str, days_ago: int = 0) -> date:
+    """
+    Get the current date in a marketplace's timezone.
+
+    Args:
+        marketplace_code: Marketplace code (e.g., 'USA', 'UK')
+        days_ago: Days to subtract from current date (default: 0 = today)
+
+    Returns:
+        date object representing today (or days_ago) in that marketplace
+    """
+    tz_name = MARKETPLACE_TIMEZONES.get(marketplace_code.upper(), "UTC")
+    tz = ZoneInfo(tz_name)
+    now_in_tz = datetime.now(tz)
+    target_date = (now_in_tz - timedelta(days=days_ago)).date()
+    return target_date
 
 
 def pull_marketplace_data(
@@ -243,18 +278,20 @@ def pull_marketplace_data(
 
 def pull_region_data(
     region: str,
-    report_date: date,
+    report_date: date = None,
     skip_existing: bool = True,
-    resume: bool = True
+    resume: bool = True,
+    days_ago: int = None
 ) -> List[dict]:
     """
     Pull data for all marketplaces in a region.
 
     Args:
         region: API region ('NA', 'EU', 'FE')
-        report_date: Date to pull data for
+        report_date: Date to pull data for (if None, uses per-marketplace dates)
         skip_existing: Skip if data already exists
         resume: Resume from checkpoint if previous pull was incomplete
+        days_ago: Days ago to pull (used when report_date is None)
 
     Returns:
         List of results for each marketplace
@@ -269,7 +306,9 @@ def pull_region_data(
     client = SPAPIClient(access_token, region=region)
 
     # Create PullTracker for checkpoint/resume capability
-    tracker = PullTracker("sales_traffic", report_date, region)
+    # Use a placeholder date for tracker if using per-marketplace dates
+    tracker_date = report_date or date.today()
+    tracker = PullTracker("sales_traffic", tracker_date, region)
     tracker.start_pull(resume=resume)
 
     # Get marketplaces to process (supports resume)
@@ -285,12 +324,19 @@ def pull_region_data(
     results = []
 
     for marketplace_code in marketplaces:
+        # Determine date for this marketplace
+        if report_date is not None:
+            mp_date = report_date
+        else:
+            mp_date = get_marketplace_date(marketplace_code, days_ago or 0)
+            print(f"   📅 {marketplace_code}: {mp_date}")
+
         # SPAPIClient handles rate limiting automatically - no need for fixed sleep
         # The client will wait based on x-amzn-RateLimit-* headers
 
         result = pull_marketplace_data(
             marketplace_code=marketplace_code,
-            report_date=report_date,
+            report_date=mp_date,
             region=region,
             skip_existing=skip_existing,
             client=client,
@@ -328,13 +374,13 @@ def main():
     parser.add_argument(
         "--date",
         type=str,
-        help="Date to pull (YYYY-MM-DD format). Defaults to yesterday."
+        help="Date to pull (YYYY-MM-DD format). If not specified, uses each marketplace's current date."
     )
     parser.add_argument(
         "--days-ago",
         type=int,
-        default=1,
-        help="Number of days ago to pull. Default: 1 (yesterday)"
+        default=0,
+        help="Number of days ago to pull. Default: 0 (today in each marketplace's timezone)"
     )
     parser.add_argument(
         "--marketplace",
@@ -370,38 +416,54 @@ def main():
     # Handle resume flag
     resume = args.resume and not args.no_resume
 
-    # Determine date
-    if args.date:
-        report_date = date.fromisoformat(args.date)
-    else:
-        report_date = date.today() - timedelta(days=args.days_ago)
+    # Determine if using fixed date or per-marketplace dates
+    use_fixed_date = args.date is not None
+    fixed_date = date.fromisoformat(args.date) if args.date else None
+    days_ago = args.days_ago
 
     print(f"\n🚀 SP-API Daily Pull Script (with retry & rate limiting)")
-    print(f"📅 Date: {report_date}")
+    if use_fixed_date:
+        print(f"📅 Date: {fixed_date} (fixed)")
+    else:
+        print(f"📅 Date: Today in each marketplace's timezone (days_ago={days_ago})")
     print(f"🌎 Region: {args.region}")
     print(f"🔄 Resume: {resume}")
 
     # Pull data
     if args.marketplace:
         # Single marketplace - create client and tracker inline
+        mp_code = args.marketplace.upper()
+        report_date = fixed_date if use_fixed_date else get_marketplace_date(mp_code, days_ago)
+        print(f"📍 {mp_code}: pulling date {report_date}")
+
         print("🔑 Getting access token...")
         access_token = get_access_token()
         client = SPAPIClient(access_token, region=args.region)
 
         results = [pull_marketplace_data(
-            marketplace_code=args.marketplace.upper(),
+            marketplace_code=mp_code,
             report_date=report_date,
             region=args.region,
             skip_existing=not args.force,
             client=client
         )]
     else:
-        # All marketplaces in region
+        # All marketplaces in region - each gets its own date
+        marketplaces = MARKETPLACES_BY_REGION.get(args.region.upper(), NA_MARKETPLACES)
+
+        # Show what dates will be pulled
+        print("\n📍 Marketplace dates:")
+        for mp in marketplaces:
+            mp_date = fixed_date if use_fixed_date else get_marketplace_date(mp, days_ago)
+            print(f"   {mp}: {mp_date}")
+
+        # Pull data with per-marketplace dates
         results = pull_region_data(
             region=args.region,
-            report_date=report_date,
+            report_date=fixed_date,  # Pass None to use per-marketplace dates
             skip_existing=not args.force,
-            resume=resume
+            resume=resume,
+            days_ago=days_ago if not use_fixed_date else None
         )
 
     # Summary

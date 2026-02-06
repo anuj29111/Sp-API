@@ -1,9 +1,10 @@
 name: Daily SP-API Sales Pull
 
 on:
-  # Run daily at 2 AM UTC (pulls yesterday's data, which is complete by then)
+  # Run multiple times daily to keep data fresh
+  # 2 AM, 8 AM, 2 PM, 8 PM UTC
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '0 2,8,14,20 * * *'
 
   # Allow manual trigger
   workflow_dispatch:
@@ -114,6 +115,6 @@ jobs:
           echo "## SP-API Daily Pull Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Mode:** ${{ github.event.inputs.mode || 'both' }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Date:** $(date -d 'yesterday' +%Y-%m-%d)" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** Today in each marketplace timezone" >> $GITHUB_STEP_SUMMARY
           echo "**Refresh Days:** ${{ github.event.inputs.refresh_days || '14' }}" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
