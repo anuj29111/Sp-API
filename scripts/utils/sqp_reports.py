@@ -543,13 +543,6 @@ def parse_sqp_response(
 
     asin_data = report_data.get("dataByAsin", [])
 
-    # Debug: log actual field names in nested objects (first item only)
-    if asin_data:
-        first = asin_data[0]
-        for key in ("impressionData", "clickData", "cartAddData", "purchaseData"):
-            sub = first.get(key) or {}
-            logger.info(f"SQP {key} keys: {sorted(sub.keys())}")
-
     for item in asin_data:
         child_asin = item.get("asin") or item.get("childAsin")
         if not child_asin:
@@ -569,14 +562,14 @@ def parse_sqp_response(
         purchase = item.get("purchaseData") or {}
 
         # Extract median prices (CurrencyAmount objects)
-        asin_click_price, asin_click_currency = _extract_currency(click.get("clickedAsinMedianPrice"))
-        total_click_price, total_click_currency = _extract_currency(click.get("clickedMedianPrice"))
+        asin_click_price, asin_click_currency = _extract_currency(click.get("asinMedianClickPrice"))
+        total_click_price, total_click_currency = _extract_currency(click.get("totalMedianClickPrice"))
 
-        asin_cart_price, asin_cart_currency = _extract_currency(cart.get("cartAddAsinMedianPrice"))
-        total_cart_price, total_cart_currency = _extract_currency(cart.get("cartAddMedianPrice"))
+        asin_cart_price, asin_cart_currency = _extract_currency(cart.get("asinMedianCartAddPrice"))
+        total_cart_price, total_cart_currency = _extract_currency(cart.get("totalMedianCartAddPrice"))
 
-        asin_purchase_price, asin_purchase_currency = _extract_currency(purchase.get("purchaseAsinMedianPrice"))
-        total_purchase_price, total_purchase_currency = _extract_currency(purchase.get("purchaseMedianPrice"))
+        asin_purchase_price, asin_purchase_currency = _extract_currency(purchase.get("asinMedianPurchasePrice"))
+        total_purchase_price, total_purchase_currency = _extract_currency(purchase.get("totalMedianPurchasePrice"))
 
         row = {
             "marketplace_id": marketplace_id,
@@ -592,47 +585,47 @@ def parse_sqp_response(
 
             # Impressions
             "total_query_impression_count": imp.get("totalQueryImpressionCount"),
-            "asin_impression_count": imp.get("impressionCount"),
-            "asin_impression_share": imp.get("impressionShare"),
+            "asin_impression_count": imp.get("asinImpressionCount"),
+            "asin_impression_share": imp.get("asinImpressionShare"),
 
             # Clicks
             "total_click_count": click.get("totalClickCount"),
-            "total_click_rate": click.get("clickRate"),
-            "asin_click_count": click.get("clickCount"),
-            "asin_click_share": click.get("clickShare"),
+            "total_click_rate": click.get("totalClickRate"),
+            "asin_click_count": click.get("asinClickCount"),
+            "asin_click_share": click.get("asinClickShare"),
             "asin_click_median_price": asin_click_price,
             "asin_click_median_price_currency": asin_click_currency,
             "total_click_median_price": total_click_price,
             "total_click_median_price_currency": total_click_currency,
-            "total_same_day_shipping_click_count": click.get("sameDayShippingClickCount"),
-            "total_one_day_shipping_click_count": click.get("oneDayShippingClickCount"),
-            "total_two_day_shipping_click_count": click.get("twoDayShippingClickCount"),
+            "total_same_day_shipping_click_count": click.get("totalSameDayShippingClickCount"),
+            "total_one_day_shipping_click_count": click.get("totalOneDayShippingClickCount"),
+            "total_two_day_shipping_click_count": click.get("totalTwoDayShippingClickCount"),
 
             # Cart Adds
             "total_cart_add_count": cart.get("totalCartAddCount"),
-            "total_cart_add_rate": cart.get("cartAddRate"),
-            "asin_cart_add_count": cart.get("cartAddCount"),
-            "asin_cart_add_share": cart.get("cartAddShare"),
+            "total_cart_add_rate": cart.get("totalCartAddRate"),
+            "asin_cart_add_count": cart.get("asinCartAddCount"),
+            "asin_cart_add_share": cart.get("asinCartAddShare"),
             "asin_cart_add_median_price": asin_cart_price,
             "asin_cart_add_median_price_currency": asin_cart_currency,
             "total_cart_add_median_price": total_cart_price,
             "total_cart_add_median_price_currency": total_cart_currency,
-            "total_same_day_shipping_cart_add_count": cart.get("sameDayShippingCartAddCount"),
-            "total_one_day_shipping_cart_add_count": cart.get("oneDayShippingCartAddCount"),
-            "total_two_day_shipping_cart_add_count": cart.get("twoDayShippingCartAddCount"),
+            "total_same_day_shipping_cart_add_count": cart.get("totalSameDayShippingCartAddCount"),
+            "total_one_day_shipping_cart_add_count": cart.get("totalOneDayShippingCartAddCount"),
+            "total_two_day_shipping_cart_add_count": cart.get("totalTwoDayShippingCartAddCount"),
 
             # Purchases
             "total_purchase_count": purchase.get("totalPurchaseCount"),
-            "total_purchase_rate": purchase.get("purchaseRate"),
-            "asin_purchase_count": purchase.get("purchaseCount"),
-            "asin_purchase_share": purchase.get("purchaseShare"),
+            "total_purchase_rate": purchase.get("totalPurchaseRate"),
+            "asin_purchase_count": purchase.get("asinPurchaseCount"),
+            "asin_purchase_share": purchase.get("asinPurchaseShare"),
             "asin_purchase_median_price": asin_purchase_price,
             "asin_purchase_median_price_currency": asin_purchase_currency,
             "total_purchase_median_price": total_purchase_price,
             "total_purchase_median_price_currency": total_purchase_currency,
-            "total_same_day_shipping_purchase_count": purchase.get("sameDayShippingPurchaseCount"),
-            "total_one_day_shipping_purchase_count": purchase.get("oneDayShippingPurchaseCount"),
-            "total_two_day_shipping_purchase_count": purchase.get("twoDayShippingPurchaseCount"),
+            "total_same_day_shipping_purchase_count": purchase.get("totalSameDayShippingPurchaseCount"),
+            "total_one_day_shipping_purchase_count": purchase.get("totalOneDayShippingPurchaseCount"),
+            "total_two_day_shipping_purchase_count": purchase.get("totalTwoDayShippingPurchaseCount"),
         }
         rows.append(row)
 
