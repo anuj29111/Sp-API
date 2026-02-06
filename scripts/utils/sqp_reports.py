@@ -526,23 +526,32 @@ def parse_sqp_response(
     """
     rows = []
 
-    # Navigate the report structure
-    # Expected: { "searchQueryPerformanceByAsin": [ { "asin": "...", "searchQueryPerformance": [ ... ] } ] }
-    # OR: a flat list of items with asin + query data
-    asin_data = report_data.get("searchQueryPerformanceByAsin", [])
-
+    # Debug: log structure on first call
+    logger.info(f"SQP response top-level keys: {list(report_data.keys())}")
+    asin_data = report_data.get("dataByAsin", [])
     if not asin_data:
-        # Try alternate structure
-        asin_data = report_data.get("dataByAsin", [])
+        asin_data = report_data.get("searchQueryPerformanceByAsin", [])
+
+    if asin_data:
+        first = asin_data[0]
+        logger.info(f"SQP first ASIN entry keys: {list(first.keys())}")
+        # Log nested structure
+        for k, v in first.items():
+            if isinstance(v, list) and v:
+                logger.info(f"  '{k}': list[{len(v)}], first item keys: {list(v[0].keys()) if isinstance(v[0], dict) else type(v[0])}")
+                if isinstance(v[0], dict):
+                    sample = json.dumps(v[0], default=str)[:500]
+                    logger.info(f"  First query sample: {sample}")
 
     for asin_entry in asin_data:
         child_asin = asin_entry.get("asin") or asin_entry.get("childAsin")
         if not child_asin:
             continue
 
-        queries = asin_entry.get("searchQueryPerformance", [])
+        # Try both possible keys for the query list
+        queries = asin_entry.get("queryPerformance", [])
         if not queries:
-            queries = asin_entry.get("queryPerformance", [])
+            queries = asin_entry.get("searchQueryPerformance", [])
 
         for q in queries:
             # Click median prices
@@ -642,54 +651,27 @@ def parse_scp_response(
     """
     rows = []
 
-    # Debug: log top-level keys and structure
-    logger.info(f"SCP response top-level keys: {list(report_data.keys())}")
-    if report_data:
-        for key in report_data.keys():
-            val = report_data[key]
-            if isinstance(val, list):
-                logger.info(f"  '{key}': list with {len(val)} items")
-                if val:
-                    logger.info(f"  First item keys: {list(val[0].keys()) if isinstance(val[0], dict) else type(val[0])}")
-                    if isinstance(val[0], dict):
-                        import json as _json
-                        logger.info(f"  First item sample: {_json.dumps(val[0], default=str)[:500]}")
-            elif isinstance(val, dict):
-                logger.info(f"  '{key}': dict with keys {list(val.keys())}")
-            else:
-                logger.info(f"  '{key}': {type(val).__name__} = {str(val)[:200]}")
-
-    # Navigate the report structure
-    asin_data = report_data.get("searchCatalogPerformanceByAsin", [])
-    if not asin_data:
-        asin_data = report_data.get("dataByAsin", [])
-
-    if not asin_data:
-        # Try all list-type values as potential data
-        for key, val in report_data.items():
-            if isinstance(val, list) and val and isinstance(val[0], dict):
-                logger.info(f"  Trying key '{key}' as data source ({len(val)} items)")
-                asin_data = val
-                break
+    # Navigate the report structure - SCP uses "dataByAsin"
+    asin_data = report_data.get("dataByAsin", [])
 
     for item in asin_data:
         child_asin = item.get("asin") or item.get("childAsin")
         if not child_asin:
             continue
 
-        # Click median prices
-        asin_click_price, asin_click_currency = _extract_currency(item.get("asinMedianClickPrice"))
-        total_click_price, total_click_currency = _extract_currency(item.get("totalMedianClickPrice"))
+        # SCP nests data under category sub-objects
+        imp = item.get("impressionData") or {}
+        click = item.get("clickData") or {}
+        cart = item.get("cartAddData") or {}
+        purchase = item.get("purchaseData") or {}
 
-        # Cart add median prices
-        asin_cart_price, asin_cart_currency = _extract_currency(item.get("asinMedianCartAddPrice"))
-        total_cart_price, total_cart_currency = _extract_currency(item.get("totalMedianCartAddPrice"))
+        # Extract median prices (CurrencyAmount objects)
+        imp_median_price, imp_median_currency = _extract_currency(imp.get("impressionMedianPrice"))
+        click_median_price, click_median_currency = _extract_currency(click.get("clickedMedianPrice"))
+        cart_median_price, cart_median_currency = _extract_currency(cart.get("cartAddMedianPrice"))
+        purchase_median_price, purchase_median_currency = _extract_currency(purchase.get("purchaseMedianPrice"))
 
-        # Purchase median prices
-        asin_purchase_price, asin_purchase_currency = _extract_currency(item.get("asinMedianPurchasePrice"))
-        total_purchase_price, total_purchase_currency = _extract_currency(item.get("totalMedianPurchasePrice"))
-
-        # SCP-specific: search traffic sales
+        # SCP-specific: search traffic sales & conversion
         sales_amount, sales_currency = _extract_currency(item.get("searchTrafficSales"))
 
         row = {
@@ -700,48 +682,37 @@ def parse_scp_response(
             "period_type": period_type,
 
             # Impressions
-            "total_query_impression_count": item.get("totalQueryImpressionCount"),
-            "asin_impression_count": item.get("asinImpressionCount"),
-            "asin_impression_share": item.get("asinImpressionShare"),
+            # SCP has no total/asin split - data is per-ASIN aggregate
+            "asin_impression_count": imp.get("impressionCount"),
+            "asin_click_median_price": imp_median_price,
+            "asin_click_median_price_currency": imp_median_currency,
 
             # Clicks
-            "total_click_count": item.get("totalClickCount"),
-            "total_click_rate": item.get("totalClickRate"),
-            "asin_click_count": item.get("asinClickCount"),
-            "asin_click_share": item.get("asinClickShare"),
-            "asin_click_median_price": asin_click_price,
-            "asin_click_median_price_currency": asin_click_currency,
-            "total_click_median_price": total_click_price,
-            "total_click_median_price_currency": total_click_currency,
-            "total_same_day_shipping_click_count": item.get("totalSameDayShippingClickCount"),
-            "total_one_day_shipping_click_count": item.get("totalOneDayShippingClickCount"),
-            "total_two_day_shipping_click_count": item.get("totalTwoDayShippingClickCount"),
+            "asin_click_count": click.get("clickCount"),
+            "total_click_rate": click.get("clickRate"),
+            "total_click_median_price": click_median_price,
+            "total_click_median_price_currency": click_median_currency,
+            "total_same_day_shipping_click_count": click.get("sameDayShippingClickCount"),
+            "total_one_day_shipping_click_count": click.get("oneDayShippingClickCount"),
+            "total_two_day_shipping_click_count": click.get("twoDayShippingClickCount"),
 
             # Cart Adds
-            "total_cart_add_count": item.get("totalCartAddCount"),
-            "total_cart_add_rate": item.get("totalCartAddRate"),
-            "asin_cart_add_count": item.get("asinCartAddCount"),
-            "asin_cart_add_share": item.get("asinCartAddShare"),
-            "asin_cart_add_median_price": asin_cart_price,
-            "asin_cart_add_median_price_currency": asin_cart_currency,
-            "total_cart_add_median_price": total_cart_price,
-            "total_cart_add_median_price_currency": total_cart_currency,
-            "total_same_day_shipping_cart_add_count": item.get("totalSameDayShippingCartAddCount"),
-            "total_one_day_shipping_cart_add_count": item.get("totalOneDayShippingCartAddCount"),
-            "total_two_day_shipping_cart_add_count": item.get("totalTwoDayShippingCartAddCount"),
+            "asin_cart_add_count": cart.get("cartAddCount"),
+            "total_cart_add_rate": cart.get("cartAddRate"),
+            "asin_cart_add_median_price": cart_median_price,
+            "asin_cart_add_median_price_currency": cart_median_currency,
+            "total_same_day_shipping_cart_add_count": cart.get("sameDayShippingCartAddCount"),
+            "total_one_day_shipping_cart_add_count": cart.get("oneDayShippingCartAddCount"),
+            "total_two_day_shipping_cart_add_count": cart.get("twoDayShippingCartAddCount"),
 
             # Purchases
-            "total_purchase_count": item.get("totalPurchaseCount"),
-            "total_purchase_rate": item.get("totalPurchaseRate"),
-            "asin_purchase_count": item.get("asinPurchaseCount"),
-            "asin_purchase_share": item.get("asinPurchaseShare"),
-            "asin_purchase_median_price": asin_purchase_price,
-            "asin_purchase_median_price_currency": asin_purchase_currency,
-            "total_purchase_median_price": total_purchase_price,
-            "total_purchase_median_price_currency": total_purchase_currency,
-            "total_same_day_shipping_purchase_count": item.get("totalSameDayShippingPurchaseCount"),
-            "total_one_day_shipping_purchase_count": item.get("totalOneDayShippingPurchaseCount"),
-            "total_two_day_shipping_purchase_count": item.get("totalTwoDayShippingPurchaseCount"),
+            "asin_purchase_count": purchase.get("purchaseCount"),
+            "total_purchase_rate": purchase.get("purchaseRate"),
+            "asin_purchase_median_price": purchase_median_price,
+            "asin_purchase_median_price_currency": purchase_median_currency,
+            "total_same_day_shipping_purchase_count": purchase.get("sameDayShippingPurchaseCount"),
+            "total_one_day_shipping_purchase_count": purchase.get("oneDayShippingPurchaseCount"),
+            "total_two_day_shipping_purchase_count": purchase.get("twoDayShippingPurchaseCount"),
 
             # SCP-specific
             "search_traffic_sales": sales_amount,
