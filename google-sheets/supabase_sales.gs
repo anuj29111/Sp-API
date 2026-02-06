@@ -336,13 +336,20 @@ function onOpen() {
   ui.createMenu('Supabase Data')
     .addItem('Test Connection', 'testConnection')
     .addSeparator()
-    .addSubMenu(ui.createMenu('TESTING Sheet')
-      .addItem('Refresh TESTING Sheet', 'refreshTestingSheet')
-      .addItem('Debug: Check Dates', 'debugTestingSheetDates')
-      .addItem('Debug: Check ASINs', 'debugTestingSheetASINs'))
+    .addSubMenu(ui.createMenu('Daily Sheets')
+      .addItem('Refresh Current Sheet', 'refreshCurrentDailySheet')
+      .addItem('Refresh TESTING Sheet', 'refreshTestingSheet'))
     .addSeparator()
-    .addItem('Test Fetch Daily USA (Feb 1-5)', 'testFetchDailyUSA')
-    .addItem('Test Write Daily Data', 'testWriteDailyData')
+    .addSubMenu(ui.createMenu('Weekly/Monthly Data')
+      .addItem('Refresh SP Data USA', 'refreshSPDataUSA')
+      .addItem('Refresh SP Data CA', 'refreshSPDataCA')
+      .addItem('Refresh SP Data MX', 'refreshSPDataMX'))
+    .addSeparator()
+    .addSubMenu(ui.createMenu('Debug')
+      .addItem('Check Sheet Dates', 'debugTestingSheetDates')
+      .addItem('Check Sheet ASINs', 'debugTestingSheetASINs'))
+    .addSeparator()
+    .addItem('Show Formula Examples', 'showFormulaExamples')
     .addToUi();
 }
 
@@ -371,18 +378,28 @@ function refreshCurrentSheet() {
 }
 
 // ============================================
-// TESTING SHEET - SIMPLE REFRESH
+// DAILY SHEET REFRESH - AUTO-DETECT COLUMNS
 // ============================================
 
 /**
- * Refreshes the TESTING sheet with units_ordered data from Supabase
+ * Refreshes the currently active sheet with daily data from Supabase
+ * Auto-detects date columns - NO HARDCODING
  *
- * Sheet structure:
+ * Sheet structure expected:
  * - A2: Marketplace UUID
  * - B2: Country code (for display only)
- * - Row 4: Date headers starting at column BT (column 72), in d/m format (e.g., 4/2 = Feb 4)
- * - Column C: ASINs (C5:C270)
- * - Data starts at BT5
+ * - Row 4: Date headers (anywhere - script auto-detects)
+ * - Column C: ASINs (C5 onwards, stops at first empty)
+ */
+function refreshCurrentDailySheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getActiveSheet();
+
+  refreshDailySheet(sheet);
+}
+
+/**
+ * Refreshes the TESTING sheet specifically
  */
 function refreshTestingSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -393,6 +410,16 @@ function refreshTestingSheet() {
     return;
   }
 
+  refreshDailySheet(sheet);
+}
+
+/**
+ * Core function to refresh any daily sheet with units_ordered data
+ * Auto-detects date columns by scanning row 4 for date values
+ *
+ * @param {Sheet} sheet - The sheet to refresh
+ */
+function refreshDailySheet(sheet) {
   try {
     const config = getSupabaseConfig();
 
@@ -404,17 +431,18 @@ function refreshTestingSheet() {
     }
     Logger.log('Marketplace ID: ' + marketplaceId);
 
-    // Step 2: Get ASINs from column C (C5:C270)
-    const asinRange = sheet.getRange('C5:C270');
+    // Step 2: Get ASINs from column C (C5 onwards, stop at first empty)
+    const asinRange = sheet.getRange('C5:C500'); // Read up to 500 rows
     const asinValues = asinRange.getValues();
     const asins = [];
-    const asinRowMap = {}; // Map ASIN to row index (0-based from C5)
 
     for (let i = 0; i < asinValues.length; i++) {
       const asin = String(asinValues[i][0]).trim();
       if (asin && asin.length > 0 && asin !== '' && asin !== 'undefined') {
         asins.push(asin);
-        asinRowMap[asin] = i;
+      } else {
+        // Stop at first empty cell
+        break;
       }
     }
     Logger.log('Found ' + asins.length + ' ASINs');
@@ -424,61 +452,19 @@ function refreshTestingSheet() {
       return;
     }
 
-    // Step 3: Get dates from row 4, starting at column BT (column 72)
-    // Read a range of date columns (let's check BT4:CZ4 which is columns 72 to 104)
-    const DATE_START_COL = 72; // Column BT
-    const dateHeaderRange = sheet.getRange(4, DATE_START_COL, 1, 40); // Read 40 columns of dates
-    const dateValues = dateHeaderRange.getValues()[0];
-
-    const dateColumns = []; // Array of {col: column number, date: 'YYYY-MM-DD'}
-
-    for (let i = 0; i < dateValues.length; i++) {
-      const cellValue = dateValues[i];
-      if (cellValue) {
-        let dateStr = null;
-
-        // Handle Date objects from Google Sheets
-        if (cellValue instanceof Date) {
-          const year = cellValue.getFullYear();
-          const month = String(cellValue.getMonth() + 1).padStart(2, '0');
-          const day = String(cellValue.getDate()).padStart(2, '0');
-          dateStr = year + '-' + month + '-' + day;
-        }
-        // Handle string format like "4/2" (d/m format)
-        else if (typeof cellValue === 'string') {
-          const parts = cellValue.split('/');
-          if (parts.length === 2) {
-            const day = parts[0].padStart(2, '0');
-            const month = parts[1].padStart(2, '0');
-            // Assume 2026 for now
-            dateStr = '2026-' + month + '-' + day;
-          }
-        }
-        // Handle number (Excel serial date)
-        else if (typeof cellValue === 'number') {
-          const jsDate = new Date((cellValue - 25569) * 86400 * 1000);
-          const year = jsDate.getFullYear();
-          const month = String(jsDate.getMonth() + 1).padStart(2, '0');
-          const day = String(jsDate.getDate()).padStart(2, '0');
-          dateStr = year + '-' + month + '-' + day;
-        }
-
-        if (dateStr) {
-          dateColumns.push({
-            col: DATE_START_COL + i,
-            date: dateStr
-          });
-          Logger.log('Column ' + (DATE_START_COL + i) + ' = ' + dateStr);
-        }
-      }
-    }
-
-    Logger.log('Found ' + dateColumns.length + ' date columns');
+    // Step 3: AUTO-DETECT date columns by scanning row 4
+    // Start from column F (6) and scan right to find date values
+    const dateColumns = autoDetectDateColumns(sheet, 4, 6, 150); // Row 4, start col F, max 150 cols
+    Logger.log('Auto-detected ' + dateColumns.length + ' date columns');
 
     if (dateColumns.length === 0) {
-      SpreadsheetApp.getUi().alert('No dates found in row 4 starting at column BT!');
+      SpreadsheetApp.getUi().alert('No dates found in row 4! Make sure you have date values in the header row.');
       return;
     }
+
+    // Get the first date column for writing data
+    const firstDateCol = dateColumns[0].col;
+    const dateValues = sheet.getRange(4, firstDateCol, 1, dateColumns.length).getValues()[0];
 
     // Step 4: Determine date range for API call
     const allDates = dateColumns.map(d => d.date).sort();
@@ -514,7 +500,8 @@ function refreshTestingSheet() {
 
       for (let c = 0; c < numCols; c++) {
         const date = dateColumns[c].date;
-        const units = (lookup[asin] && lookup[asin][date]) ? lookup[asin][date] : '';
+        // Return 0 instead of blank when no data
+        const units = (lookup[asin] && lookup[asin][date] !== undefined) ? lookup[asin][date] : 0;
         rowData.push(units);
       }
 
@@ -522,8 +509,8 @@ function refreshTestingSheet() {
     }
 
     // Step 8: Write to sheet
-    // Data starts at row 5, column BT (72)
-    const outputRange = sheet.getRange(5, DATE_START_COL, numRows, numCols);
+    // Data starts at row 5, at the first detected date column
+    const outputRange = sheet.getRange(5, firstDateCol, numRows, numCols);
     outputRange.setValues(output);
 
     // Count non-empty cells
@@ -638,4 +625,404 @@ function columnToLetter(column) {
     column = (column - temp - 1) / 26;
   }
   return letter;
+}
+
+// ============================================
+// AUTO-DETECT DATE COLUMNS
+// ============================================
+
+/**
+ * Auto-detects date columns in a row by scanning for date values
+ * Returns array of {col: column number, date: 'YYYY-MM-DD'}
+ *
+ * @param {Sheet} sheet - The sheet to scan
+ * @param {number} row - The row number to scan (e.g., 4)
+ * @param {number} startCol - Column to start scanning from (e.g., 6 for F)
+ * @param {number} maxCols - Maximum columns to scan
+ * @returns {Array} Array of {col, date} objects
+ */
+function autoDetectDateColumns(sheet, row, startCol, maxCols) {
+  const range = sheet.getRange(row, startCol, 1, maxCols);
+  const values = range.getValues()[0];
+  const dateColumns = [];
+
+  let foundFirstDate = false;
+  let consecutiveEmpty = 0;
+
+  for (let i = 0; i < values.length; i++) {
+    const cellValue = values[i];
+    const colNum = startCol + i;
+
+    if (cellValue) {
+      const dateStr = parseCellAsDate(cellValue);
+
+      if (dateStr) {
+        foundFirstDate = true;
+        consecutiveEmpty = 0;
+        dateColumns.push({
+          col: colNum,
+          date: dateStr
+        });
+      } else if (foundFirstDate) {
+        // Non-date value after we found dates - might be end of date section
+        consecutiveEmpty++;
+        if (consecutiveEmpty > 5) break; // Stop after 5 non-date cells
+      }
+    } else if (foundFirstDate) {
+      consecutiveEmpty++;
+      if (consecutiveEmpty > 5) break;
+    }
+  }
+
+  return dateColumns;
+}
+
+/**
+ * Parses a cell value as a date and returns YYYY-MM-DD string
+ * Handles: Date objects, numbers (Excel serial), strings (d/m format)
+ *
+ * @param {*} cellValue - The cell value to parse
+ * @returns {string|null} Date string in YYYY-MM-DD format, or null if not a date
+ */
+function parseCellAsDate(cellValue) {
+  if (!cellValue) return null;
+
+  // Handle Date objects from Google Sheets
+  if (cellValue instanceof Date) {
+    // Check if it's a valid date (not NaN)
+    if (isNaN(cellValue.getTime())) return null;
+
+    const year = cellValue.getFullYear();
+    const month = String(cellValue.getMonth() + 1).padStart(2, '0');
+    const day = String(cellValue.getDate()).padStart(2, '0');
+
+    // Sanity check - year should be reasonable (1900-2100)
+    if (year < 1900 || year > 2100) return null;
+
+    return year + '-' + month + '-' + day;
+  }
+
+  // Handle number (Excel serial date)
+  if (typeof cellValue === 'number') {
+    // Excel serial dates are typically > 1 and < 100000
+    if (cellValue < 1 || cellValue > 100000) return null;
+
+    const jsDate = new Date((cellValue - 25569) * 86400 * 1000);
+    if (isNaN(jsDate.getTime())) return null;
+
+    const year = jsDate.getFullYear();
+    const month = String(jsDate.getMonth() + 1).padStart(2, '0');
+    const day = String(jsDate.getDate()).padStart(2, '0');
+
+    if (year < 1900 || year > 2100) return null;
+
+    return year + '-' + month + '-' + day;
+  }
+
+  // Handle string format like "4/2" (d/m format) or "2/4" (m/d format)
+  if (typeof cellValue === 'string') {
+    const parts = cellValue.split('/');
+    if (parts.length === 2) {
+      const part1 = parseInt(parts[0], 10);
+      const part2 = parseInt(parts[1], 10);
+
+      if (isNaN(part1) || isNaN(part2)) return null;
+
+      // Assume d/m format (common in non-US locales)
+      // If first number > 12, it must be day
+      let day, month;
+      if (part1 > 12) {
+        day = part1;
+        month = part2;
+      } else if (part2 > 12) {
+        month = part1;
+        day = part2;
+      } else {
+        // Both could be day or month - assume d/m
+        day = part1;
+        month = part2;
+      }
+
+      if (day < 1 || day > 31 || month < 1 || month > 12) return null;
+
+      // Use current year
+      const year = new Date().getFullYear();
+      return year + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+    }
+  }
+
+  return null;
+}
+
+// ============================================
+// SP DATA SHEET - WEEKLY/MONTHLY
+// ============================================
+
+/**
+ * Creates or gets the SP Data sheet for a marketplace
+ * @param {string} country - Country code (USA, CA, MX)
+ * @returns {Sheet} The SP Data sheet
+ */
+function getOrCreateSPDataSheet(country) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetName = 'SP Data ' + country;
+
+  let sheet = ss.getSheetByName(sheetName);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+
+    // Add headers
+    const headers = [
+      'data_type', 'child_asin', 'period',
+      'units_ordered', 'units_ordered_b2b',
+      'ordered_product_sales', 'ordered_product_sales_b2b',
+      'sessions', 'page_views',
+      'avg_buy_box_percentage', 'avg_conversion_rate'
+    ];
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+
+    Logger.log('Created new sheet: ' + sheetName);
+  }
+
+  return sheet;
+}
+
+/**
+ * Fetches monthly data from materialized view
+ */
+function getMonthlyDataFromView(marketplaceId, config) {
+  const url = config.url + '/rest/v1/sp_monthly_asin_data?' +
+    'marketplace_id=eq.' + marketplaceId +
+    '&select=month,child_asin,units_ordered,units_ordered_b2b,ordered_product_sales,ordered_product_sales_b2b,sessions,page_views,avg_buy_box_percentage,avg_conversion_rate' +
+    '&order=month.desc,child_asin.asc';
+
+  Logger.log('Fetching monthly data from materialized view');
+
+  const options = {
+    method: 'GET',
+    headers: {
+      'apikey': config.anonKey,
+      'Authorization': 'Bearer ' + config.anonKey,
+      'Content-Type': 'application/json'
+    },
+    muteHttpExceptions: true
+  };
+
+  const response = UrlFetchApp.fetch(url, options);
+  const responseCode = response.getResponseCode();
+
+  if (responseCode !== 200) {
+    Logger.log('API Error ' + responseCode + ': ' + response.getContentText());
+    throw new Error('Supabase API error: ' + responseCode);
+  }
+
+  return JSON.parse(response.getContentText());
+}
+
+/**
+ * Fetches weekly data from materialized view
+ */
+function getWeeklyDataFromView(marketplaceId, config) {
+  const url = config.url + '/rest/v1/sp_weekly_asin_data?' +
+    'marketplace_id=eq.' + marketplaceId +
+    '&select=week_start,child_asin,units_ordered,units_ordered_b2b,ordered_product_sales,ordered_product_sales_b2b,sessions,page_views,avg_buy_box_percentage,avg_conversion_rate' +
+    '&order=week_start.desc,child_asin.asc';
+
+  Logger.log('Fetching weekly data from materialized view');
+
+  const options = {
+    method: 'GET',
+    headers: {
+      'apikey': config.anonKey,
+      'Authorization': 'Bearer ' + config.anonKey,
+      'Content-Type': 'application/json'
+    },
+    muteHttpExceptions: true
+  };
+
+  const response = UrlFetchApp.fetch(url, options);
+  const responseCode = response.getResponseCode();
+
+  if (responseCode !== 200) {
+    Logger.log('API Error ' + responseCode + ': ' + response.getContentText());
+    throw new Error('Supabase API error: ' + responseCode);
+  }
+
+  return JSON.parse(response.getContentText());
+}
+
+/**
+ * Refreshes SP Data sheet for USA with monthly and weekly data
+ */
+function refreshSPDataUSA() {
+  refreshSPData('USA', 'US');
+}
+
+/**
+ * Refreshes SP Data sheet for Canada with monthly and weekly data
+ */
+function refreshSPDataCA() {
+  refreshSPData('CA', 'CA');
+}
+
+/**
+ * Refreshes SP Data sheet for Mexico with monthly and weekly data
+ */
+function refreshSPDataMX() {
+  refreshSPData('MX', 'MX');
+}
+
+/**
+ * Core function to refresh SP Data sheet for any country
+ * @param {string} country - Country name for sheet (USA, CA, MX)
+ * @param {string} configKey - Key in config.marketplaces (US, CA, MX)
+ */
+/**
+ * Shows formula examples for pulling data from SP Data sheets
+ */
+function showFormulaExamples() {
+  const examples = `
+FORMULA EXAMPLES FOR SP DATA SHEETS
+
+These formulas pull data from the SP Data sheets into your display sheets.
+
+═══════════════════════════════════════════════════════════════
+SINGLE CELL FORMULAS (copy to each cell)
+═══════════════════════════════════════════════════════════════
+
+Monthly Units (USA):
+=IFERROR(SUMIFS('SP Data USA'!$D:$D, 'SP Data USA'!$A:$A, "monthly", 'SP Data USA'!$B:$B, $C5, 'SP Data USA'!$C:$C, TEXT(BT$4,"yyyy-mm-dd")), 0)
+
+Monthly Revenue (USA):
+=IFERROR(SUMIFS('SP Data USA'!$F:$F, 'SP Data USA'!$A:$A, "monthly", 'SP Data USA'!$B:$B, $C5, 'SP Data USA'!$C:$C, TEXT(BT$4,"yyyy-mm-dd")), 0)
+
+Weekly Units (USA):
+=IFERROR(SUMIFS('SP Data USA'!$D:$D, 'SP Data USA'!$A:$A, "weekly", 'SP Data USA'!$B:$B, $C5, 'SP Data USA'!$C:$C, TEXT(BT$4,"yyyy-mm-dd")), 0)
+
+═══════════════════════════════════════════════════════════════
+ARRAY FORMULA (one formula fills entire grid)
+═══════════════════════════════════════════════════════════════
+
+Put this in the first data cell (e.g., BT5):
+
+=BYROW(C5:C270, LAMBDA(asin,
+  BYCOL(BT4:CZ4, LAMBDA(period,
+    IFERROR(SUMIFS('SP Data USA'!$D:$D,
+      'SP Data USA'!$A:$A, "monthly",
+      'SP Data USA'!$B:$B, asin,
+      'SP Data USA'!$C:$C, TEXT(period,"yyyy-mm-dd")), 0)
+  ))
+))
+
+═══════════════════════════════════════════════════════════════
+SP DATA COLUMNS REFERENCE
+═══════════════════════════════════════════════════════════════
+
+A = data_type (monthly/weekly)
+B = child_asin
+C = period (date)
+D = units_ordered
+E = units_ordered_b2b
+F = ordered_product_sales
+G = ordered_product_sales_b2b
+H = sessions
+I = page_views
+J = avg_buy_box_percentage
+K = avg_conversion_rate
+`;
+
+  SpreadsheetApp.getUi().alert(examples);
+}
+
+/**
+ * Core function to refresh SP Data sheet for any country
+ * @param {string} country - Country name for sheet (USA, CA, MX)
+ * @param {string} configKey - Key in config.marketplaces (US, CA, MX)
+ */
+function refreshSPData(country, configKey) {
+  try {
+    const config = getSupabaseConfig();
+    const marketplaceId = config.marketplaces[configKey];
+
+    if (!marketplaceId) {
+      SpreadsheetApp.getUi().alert(country + ' marketplace ID not found in Script Config!');
+      return;
+    }
+
+    SpreadsheetApp.getActiveSpreadsheet().toast('Fetching ' + country + ' data from Supabase...', 'Please wait', 60);
+
+    // Fetch monthly and weekly data
+    const monthlyData = getMonthlyDataFromView(marketplaceId, config);
+    const weeklyData = getWeeklyDataFromView(marketplaceId, config);
+
+    Logger.log('Fetched ' + monthlyData.length + ' monthly rows');
+    Logger.log('Fetched ' + weeklyData.length + ' weekly rows');
+
+    // Get or create SP Data sheet
+    const sheet = getOrCreateSPDataSheet(country);
+
+    // Clear existing data (keep headers)
+    const lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      sheet.getRange(2, 1, lastRow - 1, 11).clear();
+    }
+
+    // Build output array
+    const output = [];
+
+    // Add monthly rows
+    for (const row of monthlyData) {
+      output.push([
+        'monthly',
+        row.child_asin,
+        row.month, // Already in YYYY-MM-DD format
+        row.units_ordered || 0,
+        row.units_ordered_b2b || 0,
+        row.ordered_product_sales || 0,
+        row.ordered_product_sales_b2b || 0,
+        row.sessions || 0,
+        row.page_views || 0,
+        row.avg_buy_box_percentage || 0,
+        row.avg_conversion_rate || 0
+      ]);
+    }
+
+    // Add weekly rows
+    for (const row of weeklyData) {
+      output.push([
+        'weekly',
+        row.child_asin,
+        row.week_start, // Already in YYYY-MM-DD format
+        row.units_ordered || 0,
+        row.units_ordered_b2b || 0,
+        row.ordered_product_sales || 0,
+        row.ordered_product_sales_b2b || 0,
+        row.sessions || 0,
+        row.page_views || 0,
+        row.avg_buy_box_percentage || 0,
+        row.avg_conversion_rate || 0
+      ]);
+    }
+
+    // Write to sheet
+    if (output.length > 0) {
+      sheet.getRange(2, 1, output.length, 11).setValues(output);
+    }
+
+    const summary = 'SP Data ' + country + ' refreshed!\n\n' +
+      'Monthly rows: ' + monthlyData.length + '\n' +
+      'Weekly rows: ' + weeklyData.length + '\n' +
+      'Total rows: ' + output.length;
+
+    Logger.log(summary);
+    SpreadsheetApp.getUi().alert(summary);
+
+  } catch (e) {
+    Logger.log('Error: ' + e.message);
+    Logger.log(e.stack);
+    SpreadsheetApp.getUi().alert('Error: ' + e.message);
+  }
 }
