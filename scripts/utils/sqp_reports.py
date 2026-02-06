@@ -511,8 +511,23 @@ def parse_sqp_response(
     """
     Parse SQP report JSON into flat database rows.
 
-    The SQP report contains nested data per ASIN per search query.
-    This flattens CurrencyAmount objects into separate _amount/_currency columns.
+    SQP response structure (each dataByAsin item = 1 ASIN + 1 search query):
+    {
+      "dataByAsin": [
+        {
+          "asin": "B00...",
+          "searchQueryData": {
+            "searchQuery": "...",
+            "searchQueryScore": 5,
+            "searchQueryVolume": 12345
+          },
+          "impressionData": { "impressionCount": ..., "impressionShare": ..., ... },
+          "clickData": { "clickCount": ..., "clickRate": ..., "clickShare": ..., ... },
+          "cartAddData": { "cartAddCount": ..., "cartAddRate": ..., ... },
+          "purchaseData": { "purchaseCount": ..., "purchaseRate": ..., ... }
+        }
+      ]
+    }
 
     Args:
         report_data: Raw JSON from the SQP report
@@ -526,100 +541,93 @@ def parse_sqp_response(
     """
     rows = []
 
-    # SQP response: {"dataByAsin": [{"asin": "...", "queryPerformance": [...]}]}
     asin_data = report_data.get("dataByAsin", [])
 
-    # Debug: log structure to identify correct field names
-    if asin_data:
-        first = asin_data[0]
-        logger.info(f"SQP ASIN entry keys: {list(first.keys())}")
-        for k, v in first.items():
-            if isinstance(v, list) and v:
-                logger.info(f"  '{k}': list[{len(v)}], first keys: {list(v[0].keys()) if isinstance(v[0], dict) else type(v[0])}")
-                if isinstance(v[0], dict):
-                    logger.info(f"  Sample: {json.dumps(v[0], default=str)[:800]}")
-            elif isinstance(v, dict):
-                logger.info(f"  '{k}': dict keys: {list(v.keys())}")
-    else:
-        logger.warning(f"SQP: no 'dataByAsin' key. Top-level keys: {list(report_data.keys())}")
-
-    for asin_entry in asin_data:
-        child_asin = asin_entry.get("asin") or asin_entry.get("childAsin")
+    for item in asin_data:
+        child_asin = item.get("asin") or item.get("childAsin")
         if not child_asin:
             continue
 
-        queries = asin_entry.get("queryPerformance", [])
+        # Search query data (dict, not list)
+        sqd = item.get("searchQueryData") or {}
 
-        for q in queries:
-            # Click median prices
-            asin_click_price, asin_click_currency = _extract_currency(q.get("asinMedianClickPrice"))
-            total_click_price, total_click_currency = _extract_currency(q.get("totalMedianClickPrice"))
+        search_query = sqd.get("searchQuery", "")
+        if not search_query:
+            continue
 
-            # Cart add median prices
-            asin_cart_price, asin_cart_currency = _extract_currency(q.get("asinMedianCartAddPrice"))
-            total_cart_price, total_cart_currency = _extract_currency(q.get("totalMedianCartAddPrice"))
+        # Nested metric sub-objects
+        imp = item.get("impressionData") or {}
+        click = item.get("clickData") or {}
+        cart = item.get("cartAddData") or {}
+        purchase = item.get("purchaseData") or {}
 
-            # Purchase median prices
-            asin_purchase_price, asin_purchase_currency = _extract_currency(q.get("asinMedianPurchasePrice"))
-            total_purchase_price, total_purchase_currency = _extract_currency(q.get("totalMedianPurchasePrice"))
+        # Extract median prices (CurrencyAmount objects)
+        asin_click_price, asin_click_currency = _extract_currency(click.get("clickedAsinMedianPrice"))
+        total_click_price, total_click_currency = _extract_currency(click.get("clickedMedianPrice"))
 
-            row = {
-                "marketplace_id": marketplace_id,
-                "child_asin": child_asin,
-                "search_query": q.get("searchQuery", ""),
-                "period_start": period_start.isoformat(),
-                "period_end": period_end.isoformat(),
-                "period_type": period_type,
+        asin_cart_price, asin_cart_currency = _extract_currency(cart.get("cartAddAsinMedianPrice"))
+        total_cart_price, total_cart_currency = _extract_currency(cart.get("cartAddMedianPrice"))
 
-                # Search query metrics
-                "search_query_score": q.get("searchQueryScore"),
-                "search_query_volume": q.get("searchQueryVolume"),
+        asin_purchase_price, asin_purchase_currency = _extract_currency(purchase.get("purchaseAsinMedianPrice"))
+        total_purchase_price, total_purchase_currency = _extract_currency(purchase.get("purchaseMedianPrice"))
 
-                # Impressions
-                "total_query_impression_count": q.get("totalQueryImpressionCount"),
-                "asin_impression_count": q.get("asinImpressionCount"),
-                "asin_impression_share": q.get("asinImpressionShare"),
+        row = {
+            "marketplace_id": marketplace_id,
+            "child_asin": child_asin,
+            "search_query": search_query,
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "period_type": period_type,
 
-                # Clicks
-                "total_click_count": q.get("totalClickCount"),
-                "total_click_rate": q.get("totalClickRate"),
-                "asin_click_count": q.get("asinClickCount"),
-                "asin_click_share": q.get("asinClickShare"),
-                "asin_click_median_price": asin_click_price,
-                "asin_click_median_price_currency": asin_click_currency,
-                "total_click_median_price": total_click_price,
-                "total_click_median_price_currency": total_click_currency,
-                "total_same_day_shipping_click_count": q.get("totalSameDayShippingClickCount"),
-                "total_one_day_shipping_click_count": q.get("totalOneDayShippingClickCount"),
-                "total_two_day_shipping_click_count": q.get("totalTwoDayShippingClickCount"),
+            # Search query metrics
+            "search_query_score": sqd.get("searchQueryScore"),
+            "search_query_volume": sqd.get("searchQueryVolume"),
 
-                # Cart Adds
-                "total_cart_add_count": q.get("totalCartAddCount"),
-                "total_cart_add_rate": q.get("totalCartAddRate"),
-                "asin_cart_add_count": q.get("asinCartAddCount"),
-                "asin_cart_add_share": q.get("asinCartAddShare"),
-                "asin_cart_add_median_price": asin_cart_price,
-                "asin_cart_add_median_price_currency": asin_cart_currency,
-                "total_cart_add_median_price": total_cart_price,
-                "total_cart_add_median_price_currency": total_cart_currency,
-                "total_same_day_shipping_cart_add_count": q.get("totalSameDayShippingCartAddCount"),
-                "total_one_day_shipping_cart_add_count": q.get("totalOneDayShippingCartAddCount"),
-                "total_two_day_shipping_cart_add_count": q.get("totalTwoDayShippingCartAddCount"),
+            # Impressions
+            "total_query_impression_count": imp.get("totalQueryImpressionCount"),
+            "asin_impression_count": imp.get("impressionCount"),
+            "asin_impression_share": imp.get("impressionShare"),
 
-                # Purchases
-                "total_purchase_count": q.get("totalPurchaseCount"),
-                "total_purchase_rate": q.get("totalPurchaseRate"),
-                "asin_purchase_count": q.get("asinPurchaseCount"),
-                "asin_purchase_share": q.get("asinPurchaseShare"),
-                "asin_purchase_median_price": asin_purchase_price,
-                "asin_purchase_median_price_currency": asin_purchase_currency,
-                "total_purchase_median_price": total_purchase_price,
-                "total_purchase_median_price_currency": total_purchase_currency,
-                "total_same_day_shipping_purchase_count": q.get("totalSameDayShippingPurchaseCount"),
-                "total_one_day_shipping_purchase_count": q.get("totalOneDayShippingPurchaseCount"),
-                "total_two_day_shipping_purchase_count": q.get("totalTwoDayShippingPurchaseCount"),
-            }
-            rows.append(row)
+            # Clicks
+            "total_click_count": click.get("totalClickCount"),
+            "total_click_rate": click.get("clickRate"),
+            "asin_click_count": click.get("clickCount"),
+            "asin_click_share": click.get("clickShare"),
+            "asin_click_median_price": asin_click_price,
+            "asin_click_median_price_currency": asin_click_currency,
+            "total_click_median_price": total_click_price,
+            "total_click_median_price_currency": total_click_currency,
+            "total_same_day_shipping_click_count": click.get("sameDayShippingClickCount"),
+            "total_one_day_shipping_click_count": click.get("oneDayShippingClickCount"),
+            "total_two_day_shipping_click_count": click.get("twoDayShippingClickCount"),
+
+            # Cart Adds
+            "total_cart_add_count": cart.get("totalCartAddCount"),
+            "total_cart_add_rate": cart.get("cartAddRate"),
+            "asin_cart_add_count": cart.get("cartAddCount"),
+            "asin_cart_add_share": cart.get("cartAddShare"),
+            "asin_cart_add_median_price": asin_cart_price,
+            "asin_cart_add_median_price_currency": asin_cart_currency,
+            "total_cart_add_median_price": total_cart_price,
+            "total_cart_add_median_price_currency": total_cart_currency,
+            "total_same_day_shipping_cart_add_count": cart.get("sameDayShippingCartAddCount"),
+            "total_one_day_shipping_cart_add_count": cart.get("oneDayShippingCartAddCount"),
+            "total_two_day_shipping_cart_add_count": cart.get("twoDayShippingCartAddCount"),
+
+            # Purchases
+            "total_purchase_count": purchase.get("totalPurchaseCount"),
+            "total_purchase_rate": purchase.get("purchaseRate"),
+            "asin_purchase_count": purchase.get("purchaseCount"),
+            "asin_purchase_share": purchase.get("purchaseShare"),
+            "asin_purchase_median_price": asin_purchase_price,
+            "asin_purchase_median_price_currency": asin_purchase_currency,
+            "total_purchase_median_price": total_purchase_price,
+            "total_purchase_median_price_currency": total_purchase_currency,
+            "total_same_day_shipping_purchase_count": purchase.get("sameDayShippingPurchaseCount"),
+            "total_one_day_shipping_purchase_count": purchase.get("oneDayShippingPurchaseCount"),
+            "total_two_day_shipping_purchase_count": purchase.get("twoDayShippingPurchaseCount"),
+        }
+        rows.append(row)
 
     return rows
 
