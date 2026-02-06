@@ -526,32 +526,15 @@ def parse_sqp_response(
     """
     rows = []
 
-    # Debug: log structure on first call
-    logger.info(f"SQP response top-level keys: {list(report_data.keys())}")
+    # SQP response: {"dataByAsin": [{"asin": "...", "queryPerformance": [...]}]}
     asin_data = report_data.get("dataByAsin", [])
-    if not asin_data:
-        asin_data = report_data.get("searchQueryPerformanceByAsin", [])
-
-    if asin_data:
-        first = asin_data[0]
-        logger.info(f"SQP first ASIN entry keys: {list(first.keys())}")
-        # Log nested structure
-        for k, v in first.items():
-            if isinstance(v, list) and v:
-                logger.info(f"  '{k}': list[{len(v)}], first item keys: {list(v[0].keys()) if isinstance(v[0], dict) else type(v[0])}")
-                if isinstance(v[0], dict):
-                    sample = json.dumps(v[0], default=str)[:500]
-                    logger.info(f"  First query sample: {sample}")
 
     for asin_entry in asin_data:
         child_asin = asin_entry.get("asin") or asin_entry.get("childAsin")
         if not child_asin:
             continue
 
-        # Try both possible keys for the query list
         queries = asin_entry.get("queryPerformance", [])
-        if not queries:
-            queries = asin_entry.get("searchQueryPerformance", [])
 
         for q in queries:
             # Click median prices
