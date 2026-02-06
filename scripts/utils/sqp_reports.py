@@ -529,6 +529,20 @@ def parse_sqp_response(
     # SQP response: {"dataByAsin": [{"asin": "...", "queryPerformance": [...]}]}
     asin_data = report_data.get("dataByAsin", [])
 
+    # Debug: log structure to identify correct field names
+    if asin_data:
+        first = asin_data[0]
+        logger.info(f"SQP ASIN entry keys: {list(first.keys())}")
+        for k, v in first.items():
+            if isinstance(v, list) and v:
+                logger.info(f"  '{k}': list[{len(v)}], first keys: {list(v[0].keys()) if isinstance(v[0], dict) else type(v[0])}")
+                if isinstance(v[0], dict):
+                    logger.info(f"  Sample: {json.dumps(v[0], default=str)[:800]}")
+            elif isinstance(v, dict):
+                logger.info(f"  '{k}': dict keys: {list(v.keys())}")
+    else:
+        logger.warning(f"SQP: no 'dataByAsin' key. Top-level keys: {list(report_data.keys())}")
+
     for asin_entry in asin_data:
         child_asin = asin_entry.get("asin") or asin_entry.get("childAsin")
         if not child_asin:
@@ -748,7 +762,8 @@ def pull_sqp_batch(
         region=region
     )
 
-    result = poll_report_status(client=client, report_id=report_id, region=region)
+    # SQP reports can take longer to process than SCP
+    result = poll_report_status(client=client, report_id=report_id, region=region, max_wait_seconds=600)
     report_data = download_report(client=client, report_document_id=result["reportDocumentId"], region=region)
 
     rows = parse_sqp_response(report_data, marketplace_id, period_start, period_end, period_type)
