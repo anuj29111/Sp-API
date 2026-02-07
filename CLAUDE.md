@@ -130,27 +130,36 @@ POP System (Advertising API) ─────────────────
 
 **Backfill Estimate:** ~28 days at 2 periods/run, 2 runs/day
 
-### Phase 3: Financial Reports ✅ COMPLETE (Code Ready, Needs First Test)
+### Phase 3: Financial Reports ✅ COMPLETE & VERIFIED
 
 **PRIMARY for CM2**: Settlement Reports contain **actual fees Amazon charged per order** — not estimates.
 
-| Report Type | SP-API Report | Script | Status |
-|-------------|---------------|--------|--------|
-| **Settlement Reports** | `GET_V2_SETTLEMENT_REPORT_DATA_FLAT_FILE_V2` | `pull_settlements.py` / `backfill_settlements.py` | ✅ Code ready |
-| **Reimbursements** | `GET_FBA_REIMBURSEMENTS_DATA` | `pull_reimbursements.py` | ✅ Code ready |
-| **FBA Fee Estimates** | `GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA` | `pull_fba_fees.py` | ✅ Code ready |
-| **Storage Fees** | `GET_FBA_STORAGE_FEE_CHARGES_DATA` | `pull_storage_fees.py` | ✅ Working (Phase 2) |
+| Report Type | SP-API Report | Script | Status | Records |
+|-------------|---------------|--------|--------|---------|
+| **Settlement Reports** | `GET_V2_SETTLEMENT_REPORT_DATA_FLAT_FILE_V2` | `pull_settlements.py` / `backfill_settlements.py` | ✅ **Working** | 536,744 tx, 21 summaries |
+| **Reimbursements** | `GET_FBA_REIMBURSEMENTS_DATA` | `pull_reimbursements.py` | ⚠️ **Partial** (API FATAL on USA/CA) | 914 (MX only) |
+| **FBA Fee Estimates** | `GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA` | `pull_fba_fees.py` | ⚠️ **Partial** (API FATAL on USA) | 1,040 (CA+MX) |
+| **Storage Fees** | `GET_FBA_STORAGE_FEE_CHARGES_DATA` | `pull_storage_fees.py` | ✅ Working (Phase 2) | 14,227 |
 
-**Settlement Report Details (most important):**
-- Contains per-order transaction-level fee breakdowns: Commission, FBA fulfillment, refunds, promotions, shipping income
-- Amazon auto-generates every ~2 weeks → Pattern: LIST available → DOWNLOAD each (not create-poll-download)
-- Deduplication via MD5 hash of 11 key fields (no row-level unique ID from Amazon)
-- Backfill target: Jan 2024 onward (~156 reports across 3 marketplaces)
+**Settlement Reports (verified Feb 7, 2026):**
+- USA: 21 settlements, 393,252 transactions, $298K net (Oct 2025 → Feb 2026)
+- CA: 5 settlements, 142,473 transactions, $312K CAD
+- MX: 6 settlements, 1,019 transactions, $18K MXN
+- Dedup integrity: CLEAN (0 duplicate hashes across all 536K rows)
+- Fee types verified: Principal ($2.1M), Commission (-$328K), FBA fulfillment (-$583K), Ad spend (-$457K), Tax, Promotions, Refunds, Shipping
+- **Architecture**: Single run per NA region (not per-marketplace). Each row attributed to correct marketplace via `marketplace-name` field with currency fallback.
+- **API 90-day lookback limit**: `getReports` API `createdSince` parameter has maximum 90-day lookback. Historical data before that window cannot be retrieved via API.
 
-**FBA Fee Estimates (secondary):**
+**Reimbursements:**
+- MX succeeded (914 records, Dec 2025 → Feb 2026). USA and CA return FATAL (Amazon API issue).
+- Unique constraint: `(marketplace_id, reimbursement_id, sku)` — supports multi-SKU reimbursement cases
+- Cron retries Monday 6 AM UTC automatically
+
+**FBA Fee Estimates:**
+- CA + MX working (520 SKUs each). USA returns FATAL (Amazon API issue, same as inventory age).
 - Shows CURRENT fees per ASIN — for projections only, NOT historical CM2
 - `dataStartTime` must be 72+ hours prior
-- Refreshed daily to track fee changes
+- Cron retries daily 5 AM UTC
 
 ### Phase 4: Product Master Data ⏸️ PENDING
 
@@ -254,7 +263,7 @@ POP System (Advertising API) ─────────────────
 |-------|---------|-----------|------------|
 | `sp_settlement_transactions` | Per-order transaction fees (PRIMARY for CM2) | `(marketplace_id, settlement_id, row_hash)` | `transaction_type`, `amount_type`, `amount_description`, `amount`, `posted_date_time`, `sku`, `order_id` |
 | `sp_settlement_summaries` | One per settlement period | `(marketplace_id, settlement_id)` | `settlement_start_date`, `settlement_end_date`, `total_amount`, `currency_code` |
-| `sp_reimbursements` | Per-SKU reimbursement records | `(marketplace_id, reimbursement_id)` | `reason`, `amount_total`, `sku`, `asin`, `quantity_reimbursed_*` |
+| `sp_reimbursements` | Per-SKU reimbursement records | `(marketplace_id, reimbursement_id, sku)` | `reason`, `amount_total`, `sku`, `asin`, `quantity_reimbursed_*` |
 | `sp_fba_fee_estimates` | Current fee estimates per ASIN | `(marketplace_id, sku)` | `estimated_fee_total`, `estimated_referral_fee_per_unit`, `estimated_pick_pack_fee_per_unit`, `product_size_tier` |
 | `sp_financial_pulls` | Pull tracking for all financial reports | Auto-increment | `report_type`, `settlement_id`, `status`, `row_count` |
 
@@ -585,10 +594,10 @@ All systems are fully automated with no manual intervention required:
 | **SQP/SCP Weekly Pull** | Tuesdays 4 AM UTC | ✅ Verified & Running |
 | **SQP/SCP Monthly Pull** | 4th of month 4 AM UTC | ✅ Configured |
 | **SQP/SCP Backfill** | 2x/day (1, 13 UTC) | ✅ Running |
-| **Settlement Reports** | Tuesdays 7 AM UTC | ✅ Configured (needs first test) |
-| **Settlement Backfill** | Manual trigger | ⏸️ Ready (target: Jan 2024) |
-| **Reimbursements** | Mondays 6 AM UTC | ✅ Configured (needs first test) |
-| **FBA Fee Estimates** | Daily 5 AM UTC | ✅ Configured (needs first test) |
+| **Settlement Reports** | Tuesdays 7 AM UTC | ✅ Verified & Running (536K tx) |
+| **Settlement Backfill** | Manual trigger | ✅ Complete (90-day max lookback) |
+| **Reimbursements** | Mondays 6 AM UTC | ⚠️ USA/CA FATAL (MX working, 914 rows) |
+| **FBA Fee Estimates** | Daily 5 AM UTC | ⚠️ USA FATAL (CA+MX working, 1,040 rows) |
 
 ---
 
@@ -598,7 +607,11 @@ All systems are fully automated with no manual intervention required:
 - **Inventory Age**: Amazon's `GET_FBA_INVENTORY_AGED_DATA` returns FATAL status. This is a known widespread issue. Fallback report works but lacks age bucket data.
 - **GitHub Timeout**: Each backfill run has 5.5-hour limit (GitHub's max is 6 hours). Fixed by running 4x/day.
 - **Settlement Report Uniqueness**: Amazon provides no row-level unique ID — system uses MD5 hash of 11 key fields for deduplication.
+- **Settlement 90-Day API Lookback**: Amazon's `getReports` API `createdSince` parameter has a maximum 90-day lookback. Dates older than 90 days return HTTP 400. Historical settlement data before that window cannot be retrieved via API. Current coverage: Oct 2025 → present.
+- **Settlement Architecture**: Amazon's LIST API returns ALL NA-region settlements regardless of marketplace filter. Scripts run once per region (not per marketplace) and attribute each row to the correct marketplace via `marketplace-name` field with currency fallback.
 - **FBA Fee Estimates**: Only show CURRENT fees, not historical. Settlement reports are the source of truth for historical fee data.
+- **Reimbursement Multi-SKU**: One reimbursement case can cover multiple SKUs. Unique constraint is `(marketplace_id, reimbursement_id, sku)`.
+- **Amazon API FATAL**: USA FBA Fee Estimates, USA/CA Reimbursements, and Inventory Age all return FATAL status. This is a known widespread Amazon API issue. Cron retries automatically.
 - **SQP Large Upserts**: USA SQP generates ~6,000+ rows per weekly pull. Fixed: upserts now use 200-row chunks and write per-batch (not accumulated). Verified working Feb 7, 2026.
 - **Cross-Workflow Rate Limits**: Each GitHub Actions workflow has its own `RateLimitHandler` (per-process, no shared state). This is fine — total usage is ~150-200 createReport calls/day out of 1,440 available (1/min). Retry/backoff handles any 429 collisions.
 
@@ -606,16 +619,21 @@ All systems are fully automated with no manual intervention required:
 
 ## Pending Tasks
 
-### Immediate: Phase 3 Testing — Financial Reports
-1. Run `settlement-backfill.yml` with `dry_run=true` to verify settlement listing works
-2. Run live with `since=2026-01-01` for recent data first
-3. Full backfill with `since=2024-01-01`
-4. Test `reimbursements-weekly.yml` and `financial-daily.yml`
+### Immediate: Monitor Reimbursement API FATAL Resolution
+- USA and CA reimbursements return FATAL (Amazon API issue, not code). MX succeeded.
+- Cron retries every Monday 6 AM UTC. Monitor for first success.
+- If FATAL persists >1 week, consider Amazon support ticket or Seller Central manual download.
 
 ### SQP/SCP Backfill Monitoring
 - **SQP backfill is running** — 2x/day at 1, 13 UTC, ~2 periods per run
 - **CA HTTP 403 on older weeks** — Brand Analytics auth issue for historical data (not a code bug). Backfill marks these as failed and continues with newer weeks. May need Amazon support ticket if it persists.
 - **Estimated completion**: ~28 days from Feb 7, 2026 (target: ~113 weeks of weekly data)
+
+### Settlement Historical Data Gap
+- API only allows 90-day lookback for settlement report listing
+- Current coverage: Oct 2025 → present (~3 months)
+- Jan 2024 → Oct 2025 data NOT available via API
+- Options: (1) Manual download from Seller Central, (2) GorillaROI historical export, (3) Accept 90-day rolling window
 
 ### Future: EU/UK Region Expansion
 1. Obtain `SP_REFRESH_TOKEN_EU` from Amazon Seller Central
@@ -646,9 +664,27 @@ All systems are fully automated with no manual intervention required:
 
 ---
 
-## Google Sheets Integration 🔧 IN PROGRESS
+## Google Sheets Integration ✅ WORKING
 
 **Replaces:** GorillaROI ($600/month)
+
+### Architecture: Tiered Approach
+
+```
+SUPABASE DATABASE
+        │
+        ├─── DAILY DATA (Direct to sheet)
+        │    Script auto-detects dates, writes directly
+        │
+        └─── WEEKLY/MONTHLY DATA (SP Data sheets)
+             Script dumps to "SP Data USA" etc.
+             User SUMIFS formulas pull from it
+```
+
+**Why this design:**
+- Daily data: Rolling 30-day window, direct write is simpler
+- Weekly/Monthly: Static historical data, row-based storage allows flexible formulas
+- No GorillaROI-style per-cell API calls = no timeouts
 
 ### Google Sheet
 
@@ -672,14 +708,108 @@ All systems are fully automated with no manual intervention required:
 | UAE | `e5f6a7b8-58cc-4372-a567-0e02b2c3d484` |
 | Australia | `f6a7b8c9-58cc-4372-a567-0e02b2c3d485` |
 
+### Apps Script Menu
+
+```
+Supabase Data Menu:
+├── Daily Sheets
+│   ├── Refresh Current Sheet (auto-detects dates)
+│   └── Refresh TESTING Sheet
+├── Weekly/Monthly Data
+│   ├── Refresh SP Data USA
+│   ├── Refresh SP Data CA
+│   └── Refresh SP Data MX
+├── Debug
+│   ├── Check Sheet Dates
+│   └── Check Sheet ASINs
+└── Show Formula Examples
+```
+
 ### Current Status
 
-| Step | Status | Notes |
-|------|--------|-------|
-| Apps Script deployed | ✅ Complete | Functions: `refreshCurrentSheet`, `testConnection`, etc. |
-| Supabase connection test | ✅ **Working** | Connection successful |
-| USA Daily data refresh | ⚠️ **Issue** | Date/ASIN matching needs fixing |
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Supabase connection | ✅ Working | Test connection passes |
+| Daily sheet refresh | ✅ Working | Auto-detects date columns, returns 0 (not blank) |
+| SP Data USA sheet | ✅ Working | 907 monthly + 1959 weekly rows loaded |
+| SP Data CA/MX | ✅ Ready | Menu functions ready, run when needed |
+| SUMIFS formulas | ✅ Working | Jan/Feb 2026 pulling correctly |
+
+### Formula for Monthly Data (SP Data sheet)
+
+**Single cell formula** (converts "Dec25" text to "2025-12-01"):
+```
+=IFERROR(SUMIFS('SP Data USA'!$D:$D,
+  'SP Data USA'!$A:$A, "monthly",
+  'SP Data USA'!$B:$B, $C5,
+  'SP Data USA'!$C:$C,
+  TEXT(DATE(IF(VALUE(RIGHT(BB$4,2))<50,2000,1900)+VALUE(RIGHT(BB$4,2)),
+       MATCH(LEFT(BB$4,3),{"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"},0), 1),
+       "yyyy-mm-dd")), 0)
+```
+
+**SP Data columns reference:**
+| Col | Field |
+|-----|-------|
+| A | data_type (monthly/weekly) |
+| B | child_asin |
+| C | period (YYYY-MM-DD) |
+| D | units_ordered |
+| E | units_ordered_b2b |
+| F | ordered_product_sales |
+| G | ordered_product_sales_b2b |
+| H | sessions |
+| I | page_views |
+| J | avg_buy_box_percentage |
+| K | avg_conversion_rate |
+
+### Pending: Formula Integration
+
+1. **Date format mismatch** - Header shows "Dec25" (text), SP Data has "2025-12-01". Formula needs to convert. Working formula provided above.
+2. **Archive fallback** - For historical data not in SP Data, formula should fall back to Archive sheets (existing INDEX/INDIRECT logic)
+3. **Array formulas** - Single formula to fill entire data grid (BYROW/BYCOL with LAMBDA)
 
 ---
 
-*Last Updated: February 7, 2026 (Session 10 - Fixed SQP chunked upserts, per-batch writes, --force flag; verified USA SQP 6,228 rows; SQP backfill running)*
+## Pending Tasks
+
+### Immediate: Google Sheets Formula Refinement
+1. Test the date conversion formula for older months (Dec25, Nov25, etc.)
+2. Create unified formula that checks SP Data first, falls back to Archive
+3. Consider adding hidden row with "yyyy-mm-dd" dates for simpler formulas
+
+### Phase 3 Testing — Financial Reports
+1. Run `settlement-backfill.yml` with `dry_run=true` to verify settlement listing works
+2. Run live with `since=2026-01-01` for recent data first
+3. Full backfill with `since=2024-01-01`
+4. Test `reimbursements-weekly.yml` and `financial-daily.yml`
+
+### SQP/SCP Backfill Monitoring
+- **SQP backfill is running** — 2x/day at 1, 13 UTC, ~2 periods per run
+- **Estimated completion**: ~28 days from Feb 7, 2026
+
+### Future: EU/UK Region Expansion
+1. Obtain `SP_REFRESH_TOKEN_EU` from Amazon Seller Central
+2. Update `auth.py` to support EU region token selection
+
+### Future Phases
+1. **Phase 4**: Product master table for COGS
+2. **Phase 5**: CM1/CM2 calculation views
+3. **Phase 6**: Web dashboard integration
+
+---
+
+## GitHub Secrets
+
+| Secret | Purpose |
+|--------|---------|
+| `SP_LWA_CLIENT_ID` | Amazon SP-API credentials |
+| `SP_LWA_CLIENT_SECRET` | Amazon SP-API credentials |
+| `SP_REFRESH_TOKEN_NA` | North America refresh token |
+| `SUPABASE_URL` | Database URL |
+| `SUPABASE_SERVICE_KEY` | Database access |
+| `SLACK_WEBHOOK_URL` | Slack alerts for failures |
+
+---
+
+*Last Updated: February 7, 2026 (Session 12 - Phase 3 Financial Reports tested & verified. Settlements: 536K tx across 32 settlements. Fixed marketplace attribution bug + reimbursement multi-SKU constraint. Discovered 90-day API lookback limit.)*
