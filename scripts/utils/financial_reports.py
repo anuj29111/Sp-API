@@ -73,6 +73,35 @@ FINANCIAL_REPORT_TYPES = {
     "FBA_FEE_ESTIMATES": "GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA",
 }
 
+# Map Amazon's marketplace-name field → our marketplace code
+# Used to determine correct marketplace_id per settlement row
+MARKETPLACE_NAME_TO_CODE = {
+    "Amazon.com": "USA",
+    "Amazon.ca": "CA",
+    "Amazon.com.mx": "MX",
+    "Non-Amazon US": "USA",  # Non-Amazon channel, still US
+    "Amazon.co.uk": "UK",
+    "Amazon.de": "DE",
+    "Amazon.fr": "FR",
+    "Amazon.it": "IT",
+    "Amazon.es": "ES",
+    "Amazon.ae": "UAE",
+    "Amazon.com.au": "AU",
+    "Amazon.co.jp": "JP",
+}
+
+# Fallback: currency → marketplace code (for rows with no marketplace-name)
+CURRENCY_TO_MARKETPLACE_CODE = {
+    "USD": "USA",
+    "CAD": "CA",
+    "MXN": "MX",
+    "GBP": "UK",
+    "EUR": "DE",  # Default EUR to DE (most common)
+    "AED": "UAE",
+    "AUD": "AU",
+    "JPY": "JP",
+}
+
 
 # =============================================================================
 # Settlement Reports (LIST → DOWNLOAD pattern)
@@ -196,29 +225,89 @@ def compute_settlement_row_hash(row: Dict[str, str]) -> str:
     return hashlib.md5(hash_string.encode()).hexdigest()
 
 
+def _resolve_marketplace_id(
+    row: Dict[str, str],
+    marketplace_uuids: Dict[str, str],
+    fallback_marketplace_id: str
+) -> str:
+    """
+    Determine the correct marketplace UUID for a settlement row.
+
+    Priority:
+    1. marketplace-name field (e.g., "Amazon.com" → USA)
+    2. currency field as fallback (e.g., "CAD" → CA)
+    3. fallback_marketplace_id (passed by caller)
+    """
+    # Try marketplace-name first
+    mp_name = _safe_get(row, "marketplace-name")
+    if mp_name and mp_name in MARKETPLACE_NAME_TO_CODE:
+        code = MARKETPLACE_NAME_TO_CODE[mp_name]
+        if code in marketplace_uuids:
+            return marketplace_uuids[code]
+
+    # Try currency as fallback
+    currency = _safe_get(row, "currency")
+    if currency and currency in CURRENCY_TO_MARKETPLACE_CODE:
+        code = CURRENCY_TO_MARKETPLACE_CODE[currency]
+        if code in marketplace_uuids:
+            return marketplace_uuids[code]
+
+    return fallback_marketplace_id
+
+
 def parse_settlement_rows(
     rows: List[Dict[str, str]],
     marketplace_id: str,
-    import_id: str = None
+    import_id: str = None,
+    marketplace_uuids: Dict[str, str] = None,
+    filter_marketplace_code: str = None
 ) -> tuple:
     """
     Parse settlement report rows into transactions and summary.
 
+    Each row's marketplace is determined from its marketplace-name field,
+    NOT from the caller's marketplace parameter (which is only a fallback).
+
+    Amazon's LIST API returns ALL NA-region settlements regardless of
+    marketplace filter, so a single report may contain transactions for
+    USA, CA, and MX.
+
     Args:
         rows: Raw TSV rows from download_report()
-        marketplace_id: Supabase marketplace UUID
+        marketplace_id: Fallback Supabase marketplace UUID
         import_id: Data import tracking ID
+        marketplace_uuids: Dict mapping marketplace codes to UUIDs
+                           (e.g., {"USA": "f47ac10b-...", "CA": "a1b2c3d4-..."})
+                           If provided, marketplace_id is resolved per-row.
+        filter_marketplace_code: If set, only include rows matching this marketplace
+                                 (e.g., "USA"). Rows for other marketplaces are skipped.
 
     Returns:
         (transactions_list, summary_dict)
     """
     transactions = []
     summary = None
+    skipped_other_marketplace = 0
 
     for row in rows:
         settlement_id = _safe_get(row, "settlement-id")
         if not settlement_id:
             continue
+
+        # Determine marketplace_id per-row
+        if marketplace_uuids:
+            row_marketplace_id = _resolve_marketplace_id(
+                row, marketplace_uuids, marketplace_id
+            )
+        else:
+            row_marketplace_id = marketplace_id
+
+        # Filter by marketplace if requested
+        if filter_marketplace_code and marketplace_uuids:
+            target_mp_id = marketplace_uuids.get(filter_marketplace_code)
+            if target_mp_id and row_marketplace_id != target_mp_id:
+                skipped_other_marketplace += 1
+                continue
 
         # Parse amount
         amount_str = _safe_get(row, "amount")
@@ -245,7 +334,7 @@ def parse_settlement_rows(
         row_hash = compute_settlement_row_hash(row)
 
         transaction = {
-            "marketplace_id": marketplace_id,
+            "marketplace_id": row_marketplace_id,
             "settlement_id": settlement_id,
             "settlement_start_date": _normalize_date(_safe_get(row, "settlement-start-date")),
             "settlement_end_date": _normalize_date(_safe_get(row, "settlement-end-date")),
@@ -286,7 +375,7 @@ def parse_settlement_rows(
                     pass
 
             summary = {
-                "marketplace_id": marketplace_id,
+                "marketplace_id": row_marketplace_id,
                 "settlement_id": settlement_id,
                 "settlement_start_date": _normalize_date(_safe_get(row, "settlement-start-date")),
                 "settlement_end_date": _normalize_date(_safe_get(row, "settlement-end-date")),
@@ -296,6 +385,9 @@ def parse_settlement_rows(
                 "transaction_count": 0,  # Will be updated
                 "import_id": import_id,
             }
+
+    if skipped_other_marketplace > 0:
+        print(f"    Skipped {skipped_other_marketplace} rows belonging to other marketplaces")
 
     # Update transaction count in summary
     if summary:

@@ -938,27 +938,31 @@ def update_financial_pull_status(
     client.table("sp_financial_pulls").update(update_data).eq("id", pull_id).execute()
 
 
-def get_processed_settlement_ids(marketplace_code: str) -> List[str]:
+def get_processed_settlement_ids(marketplace_code: str = None) -> List[str]:
     """
-    Get list of settlement IDs already processed for a marketplace.
+    Get list of settlement IDs already processed.
 
-    Used to skip already-downloaded settlement reports during backfill.
+    Settlement IDs are globally unique — the same settlement report
+    contains transactions for all marketplaces in the region.
+    So we check if a settlement has been processed at all, regardless
+    of which marketplace triggered the pull.
+
+    Args:
+        marketplace_code: Deprecated / ignored. Kept for backward compat.
 
     Returns:
         List of settlement_id strings
     """
     client = get_supabase_client()
-    marketplace_id = MARKETPLACE_UUIDS[marketplace_code]
 
     result = client.table("sp_financial_pulls") \
         .select("settlement_id") \
-        .eq("marketplace_id", marketplace_id) \
         .eq("report_type", "GET_V2_SETTLEMENT_REPORT_DATA_FLAT_FILE_V2") \
         .eq("status", "completed") \
         .not_.is_("settlement_id", "null") \
         .execute()
 
-    return [r["settlement_id"] for r in result.data]
+    return list(set(r["settlement_id"] for r in result.data))
 
 
 def upsert_settlement_transactions(

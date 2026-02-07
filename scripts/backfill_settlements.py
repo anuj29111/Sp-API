@@ -44,7 +44,6 @@ from utils.financial_reports import (
 )
 from utils.inventory_reports import MARKETPLACE_IDS
 from utils.db import (
-    get_supabase_client,
     create_data_import,
     update_data_import,
     create_financial_pull_record,
@@ -55,63 +54,61 @@ from utils.db import (
     MARKETPLACE_UUIDS,
 )
 
-# Default marketplaces
-DEFAULT_MARKETPLACES = ["USA", "CA", "MX"]
-
 # Default backfill start
 DEFAULT_SINCE = "2024-01-01"
 
 # Rate limits
 DOWNLOAD_DELAY = 10       # Seconds between report downloads (increased from 5s - was getting 429s)
-MARKETPLACE_DELAY = 10    # Seconds between marketplaces
 
 # GitHub Actions timeout safety
 MAX_RUNTIME_SECONDS = 5.5 * 60 * 60  # 5.5 hours (GitHub max is 6)
 
 
-def backfill_marketplace(
+def backfill_settlements(
     access_token: str,
-    marketplace_code: str,
     since_date: str,
     region: str = "NA",
     dry_run: bool = False,
-    start_time: float = None
+    start_time: float = None,
+    list_marketplace: str = "USA"
 ) -> Dict[str, Any]:
     """
-    Backfill all settlement reports for a marketplace since a date.
+    Backfill all settlement reports since a date.
 
-    Automatically skips already-processed settlement IDs.
+    Amazon's LIST API returns ALL NA-region settlements regardless of
+    marketplace filter. Each report contains transactions for multiple
+    marketplaces. This function processes each report once and attributes
+    rows to the correct marketplace using the marketplace-name field.
 
     Args:
         access_token: Valid SP-API access token
-        marketplace_code: Marketplace code
         since_date: ISO date string
         region: API region
         dry_run: If True, don't write to database
         start_time: Script start time for timeout checking
+        list_marketplace: Marketplace to use for LIST API call
 
     Returns:
         Dict with backfill statistics
     """
     report_type = FINANCIAL_REPORT_TYPES["SETTLEMENT"]
-    marketplace_id = MARKETPLACE_UUIDS[marketplace_code]
     mp_start = time.time()
 
     print(f"\n{'='*60}")
-    print(f"Backfilling Settlement Reports: {marketplace_code}")
+    print(f"Backfilling Settlement Reports — NA Region")
     print(f"Since: {since_date}")
     print(f"{'='*60}")
 
     # Step 1: List ALL available reports since the backfill date
     try:
         reports = list_settlement_reports(
-            access_token, marketplace_code, region, since_date, max_results=100
+            access_token, list_marketplace, region, since_date, max_results=100
         )
     except Exception as e:
         print(f"  ✗ Error listing reports: {e}")
         return {
             "status": "failed",
-            "marketplace": marketplace_code,
+            "marketplace": "NA",
             "error": str(e),
             "reports_processed": 0,
             "reports_skipped": 0,
@@ -123,15 +120,15 @@ def backfill_marketplace(
     if not reports:
         return {
             "status": "no_data",
-            "marketplace": marketplace_code,
+            "marketplace": "NA",
             "reports_processed": 0,
             "reports_skipped": 0,
             "total_transactions": 0
         }
 
-    # Step 2: Get already-processed settlement IDs
+    # Step 2: Get already-processed settlement IDs (globally)
     if not dry_run:
-        processed_ids = get_processed_settlement_ids(marketplace_code)
+        processed_ids = get_processed_settlement_ids()
         processed_set = set(processed_ids)
         print(f"  Already processed: {len(processed_set)} settlements")
     else:
@@ -175,7 +172,7 @@ def backfill_marketplace(
                 continue
 
             # Get settlement ID
-            settlement_id = rows[0].get("settlement-id", "").strip()
+            settlement_id = (rows[0].get("settlement-id") or "").strip()
             if not settlement_id:
                 continue
 
@@ -188,25 +185,38 @@ def backfill_marketplace(
                 continue
 
             if dry_run:
-                transactions, summary = parse_settlement_rows(rows, marketplace_id)
+                transactions, summary = parse_settlement_rows(
+                    rows, MARKETPLACE_UUIDS.get("USA", ""),
+                    marketplace_uuids=MARKETPLACE_UUIDS
+                )
+                # Count by marketplace
+                mp_counts = {}
+                for tx in transactions:
+                    mp_id = tx["marketplace_id"]
+                    mp_counts[mp_id] = mp_counts.get(mp_id, 0) + 1
+                mp_labels = {v: k for k, v in MARKETPLACE_UUIDS.items()}
+                mp_summary = ", ".join(
+                    f"{mp_labels.get(mp_id, mp_id)}: {count}"
+                    for mp_id, count in sorted(mp_counts.items(), key=lambda x: -x[1])
+                )
                 period = ""
                 if summary:
                     period = (f" ({summary.get('settlement_start_date', '?')}"
                               f" to {summary.get('settlement_end_date', '?')})")
-                print(f"    [DRY RUN] {len(transactions)} transactions{period}")
+                print(f"    [DRY RUN] {len(transactions)} transactions ({mp_summary}){period}")
                 total_transactions += len(transactions)
                 reports_processed += 1
                 continue
 
             # Create tracking
             import_id = create_data_import(
-                marketplace_code,
+                "USA",
                 date.today(),
                 import_type="sp_api_settlement"
             )
 
             pull_id = create_financial_pull_record(
-                marketplace_code=marketplace_code,
+                marketplace_code="USA",
                 report_type=report_type,
                 pull_date=date.today(),
                 import_id=import_id,
@@ -215,10 +225,21 @@ def backfill_marketplace(
                 report_document_id=report_doc_id
             )
 
-            # Parse and upsert
+            # Parse and upsert with per-row marketplace attribution
             transactions, summary = parse_settlement_rows(
-                rows, marketplace_id, import_id
+                rows, MARKETPLACE_UUIDS.get("USA", ""),
+                import_id=import_id,
+                marketplace_uuids=MARKETPLACE_UUIDS
             )
+
+            # Log marketplace breakdown
+            mp_counts = {}
+            for tx in transactions:
+                mp_id = tx["marketplace_id"]
+                mp_counts[mp_id] = mp_counts.get(mp_id, 0) + 1
+            mp_labels = {v: k for k, v in MARKETPLACE_UUIDS.items()}
+            for mp_id, count in sorted(mp_counts.items(), key=lambda x: -x[1]):
+                print(f"    → {mp_labels.get(mp_id, mp_id)}: {count} transactions")
 
             tx_count = upsert_settlement_transactions(transactions)
             print(f"    ✅ {tx_count} transactions")
@@ -256,7 +277,7 @@ def backfill_marketplace(
 
     return {
         "status": "completed" if not errors else "partial",
-        "marketplace": marketplace_code,
+        "marketplace": "NA",
         "reports_found": len(reports),
         "reports_processed": reports_processed,
         "reports_skipped": reports_skipped,
@@ -279,7 +300,8 @@ def main():
     parser.add_argument(
         "--marketplace",
         type=str,
-        help="Specific marketplace to backfill (e.g., USA, CA, MX)"
+        help="Marketplace to use for LIST API call (default: USA). "
+             "Note: All NA settlements are returned regardless of marketplace."
     )
     parser.add_argument(
         "--dry-run",
@@ -291,22 +313,16 @@ def main():
 
     since_date = f"{args.since}T00:00:00Z"
 
-    # Determine marketplaces
-    if args.marketplace:
-        marketplaces = [args.marketplace.upper()]
-    else:
-        marketplaces = DEFAULT_MARKETPLACES
-
-    # Validate
-    for mp in marketplaces:
-        if mp not in MARKETPLACE_IDS:
-            print(f"Error: Invalid marketplace '{mp}'")
-            sys.exit(1)
+    # Marketplace for listing (any NA marketplace returns all NA settlements)
+    list_marketplace = (args.marketplace or "USA").upper()
+    if list_marketplace not in MARKETPLACE_IDS:
+        print(f"Error: Invalid marketplace '{list_marketplace}'")
+        sys.exit(1)
 
     print("=" * 60)
     print("SETTLEMENT REPORT BACKFILL")
     print(f"Since: {args.since}")
-    print(f"Marketplaces: {', '.join(marketplaces)}")
+    print(f"List marketplace: {list_marketplace} (all NA settlements returned)")
     print(f"Dry run: {args.dry_run}")
     print("=" * 60)
 
@@ -317,66 +333,39 @@ def main():
 
     script_start = time.time()
 
-    # Process each marketplace
-    results = []
-    for i, marketplace in enumerate(marketplaces):
-        # Check timeout
-        if (time.time() - script_start) > MAX_RUNTIME_SECONDS:
-            print(f"\n⏱️  Approaching timeout — stopping before {marketplace}")
-            break
-
-        if i > 0:
-            print(f"\nWaiting {MARKETPLACE_DELAY}s between marketplaces...")
-            time.sleep(MARKETPLACE_DELAY)
-
-        result = backfill_marketplace(
-            access_token,
-            marketplace,
-            since_date,
-            region="NA",
-            dry_run=args.dry_run,
-            start_time=script_start
-        )
-        results.append(result)
+    # Process all settlement reports (single run for entire NA region)
+    result = backfill_settlements(
+        access_token,
+        since_date,
+        region="NA",
+        dry_run=args.dry_run,
+        start_time=script_start,
+        list_marketplace=list_marketplace
+    )
 
     # Summary
     print("\n" + "=" * 60)
     print("BACKFILL SUMMARY")
     print("=" * 60)
 
-    total_reports = 0
-    total_skipped = 0
-    total_transactions = 0
-    failed = 0
+    status = result["status"]
+    reports_processed = result.get("reports_processed", 0)
+    skipped = result.get("reports_skipped", 0)
+    transactions = result.get("total_transactions", 0)
+    found = result.get("reports_found", 0)
 
-    for result in results:
-        marketplace = result["marketplace"]
-        status = result["status"]
-
-        reports_processed = result.get("reports_processed", 0)
-        skipped = result.get("reports_skipped", 0)
-        transactions = result.get("total_transactions", 0)
-        found = result.get("reports_found", 0)
-
-        total_reports += reports_processed
-        total_skipped += skipped
-        total_transactions += transactions
-
-        if status == "failed":
-            failed += 1
-            print(f"  {marketplace}: ✗ {result.get('error', 'Unknown error')}")
-        else:
-            icon = "✓" if status in ["completed", "dry_run"] else "⚠️"
-            print(f"  {marketplace}: {icon} {reports_processed} new / "
-                  f"{skipped} skipped / {found} total found, "
-                  f"{transactions} transactions")
+    if status == "failed":
+        print(f"  ✗ {result.get('error', 'Unknown error')}")
+    else:
+        icon = "✓" if status in ["completed", "dry_run"] else "⚠️"
+        print(f"  {icon} {reports_processed} new / "
+              f"{skipped} skipped / {found} total found, "
+              f"{transactions} transactions")
 
     total_time = int((time.time() - script_start))
-    print(f"\nTotal: {total_reports} new reports, {total_skipped} skipped, "
-          f"{total_transactions} transactions")
     print(f"Time: {total_time // 60}m {total_time % 60}s")
 
-    if failed > 0:
+    if status == "failed":
         sys.exit(1)
 
 
