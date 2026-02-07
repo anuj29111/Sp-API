@@ -467,13 +467,16 @@ def update_pull_checkpoint(
 # SQP/SCP Functions (Search Query Performance / Search Catalog Performance)
 # =============================================================================
 
-def upsert_sqp_data(rows: List[Dict], chunk_size: int = 500) -> int:
+def upsert_sqp_data(rows: List[Dict], chunk_size: int = 200) -> int:
     """
     Batch upsert SQP data rows into sp_sqp_data.
 
+    Uses small chunks (200 rows) to avoid Cloudflare/Supabase POST body size
+    limits. SQP rows have ~47 columns so 200 rows ≈ safe payload size.
+
     Args:
         rows: List of flat dicts ready for insert
-        chunk_size: Number of rows per upsert batch
+        chunk_size: Number of rows per upsert batch (default 200)
 
     Returns:
         Total number of rows upserted
@@ -483,25 +486,36 @@ def upsert_sqp_data(rows: List[Dict], chunk_size: int = 500) -> int:
 
     client = get_supabase_client()
     total = 0
+    num_chunks = (len(rows) + chunk_size - 1) // chunk_size
 
     for i in range(0, len(rows), chunk_size):
         chunk = rows[i:i + chunk_size]
-        client.table("sp_sqp_data").upsert(
-            chunk,
-            on_conflict="marketplace_id,child_asin,search_query,period_start,period_end,period_type"
-        ).execute()
-        total += len(chunk)
+        chunk_num = i // chunk_size + 1
+        try:
+            client.table("sp_sqp_data").upsert(
+                chunk,
+                on_conflict="marketplace_id,child_asin,search_query,period_start,period_end,period_type"
+            ).execute()
+            total += len(chunk)
+            if num_chunks > 1:
+                print(f"    [upsert chunk {chunk_num}/{num_chunks}: {len(chunk)} rows OK]", flush=True)
+        except Exception as e:
+            print(f"    [upsert chunk {chunk_num}/{num_chunks}: FAILED - {str(e)[:200]}]", flush=True)
+            raise
 
     return total
 
 
-def upsert_scp_data(rows: List[Dict], chunk_size: int = 500) -> int:
+def upsert_scp_data(rows: List[Dict], chunk_size: int = 200) -> int:
     """
     Batch upsert SCP data rows into sp_scp_data.
 
+    Uses small chunks (200 rows) to avoid Cloudflare/Supabase POST body size
+    limits. SCP rows have ~30 columns so 200 rows is safe.
+
     Args:
         rows: List of flat dicts ready for insert
-        chunk_size: Number of rows per upsert batch
+        chunk_size: Number of rows per upsert batch (default 200)
 
     Returns:
         Total number of rows upserted
@@ -511,14 +525,22 @@ def upsert_scp_data(rows: List[Dict], chunk_size: int = 500) -> int:
 
     client = get_supabase_client()
     total = 0
+    num_chunks = (len(rows) + chunk_size - 1) // chunk_size
 
     for i in range(0, len(rows), chunk_size):
         chunk = rows[i:i + chunk_size]
-        client.table("sp_scp_data").upsert(
-            chunk,
-            on_conflict="marketplace_id,child_asin,period_start,period_end,period_type"
-        ).execute()
-        total += len(chunk)
+        chunk_num = i // chunk_size + 1
+        try:
+            client.table("sp_scp_data").upsert(
+                chunk,
+                on_conflict="marketplace_id,child_asin,period_start,period_end,period_type"
+            ).execute()
+            total += len(chunk)
+            if num_chunks > 1:
+                print(f"    [upsert chunk {chunk_num}/{num_chunks}: {len(chunk)} rows OK]", flush=True)
+        except Exception as e:
+            print(f"    [upsert chunk {chunk_num}/{num_chunks}: FAILED - {str(e)[:200]}]", flush=True)
+            raise
 
     return total
 

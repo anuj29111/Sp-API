@@ -146,7 +146,7 @@ def pull_for_marketplace(
         if existing and resume and existing.get("batch_status"):
             existing_batch_status = existing["batch_status"]
 
-        all_rows = []
+        total_rows_upserted = 0
         total_queries = 0
         batch_status = dict(existing_batch_status)
 
@@ -185,16 +185,24 @@ def pull_for_marketplace(
                         marketplace_id=marketplace_id
                     )
 
-                all_rows.extend(rows)
+                # Upsert immediately per-batch (prevents data loss on later failure)
+                if rows:
+                    if report_type == "SQP":
+                        upsert_sqp_data(rows)
+                    else:
+                        upsert_scp_data(rows)
+                    total_rows_upserted += len(rows)
+
                 batch_status[batch_key] = "completed"
                 result["completed_batches"] += 1
-                print(f"{len(rows)} rows")
+                print(f"{len(rows)} rows (upserted)")
 
                 # Update tracking after each batch (for resume)
                 update_sqp_pull_status(
                     pull_id,
                     batch_status=batch_status,
-                    completed_batches=result["completed_batches"]
+                    completed_batches=result["completed_batches"],
+                    total_rows=total_rows_upserted
                 )
 
             except RuntimeError as e:
@@ -232,15 +240,6 @@ def pull_for_marketplace(
                     error_count=result["failed_batches"]
                 )
 
-        # Upsert all collected rows
-        if all_rows:
-            print(f"  Upserting {len(all_rows)} rows to database...", end=" ", flush=True)
-            if report_type == "SQP":
-                upsert_sqp_data(all_rows)
-            else:
-                upsert_scp_data(all_rows)
-            print("done")
-
         # Determine final status
         processing_time_ms = int((time.time() - start_time) * 1000)
 
@@ -252,7 +251,7 @@ def pull_for_marketplace(
             final_status = "failed"
 
         result["status"] = final_status
-        result["total_rows"] = len(all_rows)
+        result["total_rows"] = total_rows_upserted
         result["total_queries"] = total_queries
 
         # Update pull record with final status
@@ -262,14 +261,13 @@ def pull_for_marketplace(
             batch_status=batch_status,
             completed_batches=result["completed_batches"],
             failed_batches=result["failed_batches"],
-            total_asins_returned=len(set(r.get("child_asin") for r in all_rows)),
-            total_rows=len(all_rows),
+            total_rows=total_rows_upserted,
             total_queries=total_queries,
             processing_time_ms=processing_time_ms
         )
 
         status_emoji = {"completed": "OK", "partial": "PARTIAL", "failed": "FAILED"}.get(final_status, "?")
-        print(f"  [{status_emoji}] {marketplace_code} {report_type}: {len(all_rows)} rows, {result['completed_batches']}/{len(batches)} batches in {processing_time_ms/1000:.1f}s")
+        print(f"  [{status_emoji}] {marketplace_code} {report_type}: {total_rows_upserted} rows, {result['completed_batches']}/{len(batches)} batches in {processing_time_ms/1000:.1f}s")
 
     except Exception as e:
         error_msg = str(e)
