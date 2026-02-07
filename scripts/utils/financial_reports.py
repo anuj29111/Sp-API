@@ -24,12 +24,46 @@ from utils.inventory_reports import (
 )
 
 
+import re
+
+
 def _safe_get(row: dict, key: str, default: str = "") -> str:
     """Safely get a string value from a row dict, handling None values."""
     val = row.get(key, default)
     if val is None:
         return default
     return str(val).strip()
+
+
+def _normalize_date(val: str) -> Optional[str]:
+    """
+    Normalize date strings from settlement reports to ISO format.
+
+    Amazon settlement reports use inconsistent date formats:
+    - "2025-12-27 23:20:10 UTC" (ISO-like, works in PostgreSQL)
+    - "25.12.2025 17:49:21 UTC" (European DD.MM.YYYY, fails in PostgreSQL)
+    - "22.01.2026 17:49:21 UTC" (European DD.MM.YYYY, fails)
+
+    Returns ISO format: "2025-12-25 17:49:21" or None
+    """
+    if not val:
+        return None
+
+    # Match DD.MM.YYYY HH:MM:SS (with optional timezone)
+    match = re.match(r'^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}:\d{2}:\d{2})', val)
+    if match:
+        day, month, year, time_part = match.groups()
+        return f"{year}-{month}-{day} {time_part}"
+
+    # Match DD.MM.YYYY (date only)
+    match = re.match(r'^(\d{2})\.(\d{2})\.(\d{4})$', val)
+    if match:
+        day, month, year = match.groups()
+        return f"{year}-{month}-{day}"
+
+    # Already ISO-compatible — strip timezone suffix if present
+    val = val.replace(" UTC", "").replace(" PST", "").replace(" PDT", "")
+    return val
 
 
 # Financial report types
@@ -204,8 +238,8 @@ def parse_settlement_rows(
             except (ValueError, TypeError):
                 pass
 
-        # Parse posted-date-time
-        posted_dt = _safe_get(row, "posted-date-time") or None
+        # Parse posted-date-time (normalize European date format)
+        posted_dt = _normalize_date(_safe_get(row, "posted-date-time"))
 
         # Compute row hash for dedup
         row_hash = compute_settlement_row_hash(row)
@@ -213,9 +247,9 @@ def parse_settlement_rows(
         transaction = {
             "marketplace_id": marketplace_id,
             "settlement_id": settlement_id,
-            "settlement_start_date": _safe_get(row, "settlement-start-date") or None,
-            "settlement_end_date": _safe_get(row, "settlement-end-date") or None,
-            "deposit_date": _safe_get(row, "deposit-date") or None,
+            "settlement_start_date": _normalize_date(_safe_get(row, "settlement-start-date")),
+            "settlement_end_date": _normalize_date(_safe_get(row, "settlement-end-date")),
+            "deposit_date": _normalize_date(_safe_get(row, "deposit-date")),
             "transaction_type": _safe_get(row, "transaction-type") or None,
             "order_id": _safe_get(row, "order-id") or None,
             "merchant_order_id": _safe_get(row, "merchant-order-id") or None,
@@ -229,7 +263,7 @@ def parse_settlement_rows(
             "amount": amount,
             "currency_code": _safe_get(row, "currency") or None,
             "fulfillment_id": _safe_get(row, "fulfillment-id") or None,
-            "posted_date": _safe_get(row, "posted-date") or None,
+            "posted_date": _normalize_date(_safe_get(row, "posted-date")),
             "posted_date_time": posted_dt,
             "order_item_code": _safe_get(row, "order-item-code") or None,
             "merchant_order_item_id": _safe_get(row, "merchant-order-item-id") or None,
@@ -254,9 +288,9 @@ def parse_settlement_rows(
             summary = {
                 "marketplace_id": marketplace_id,
                 "settlement_id": settlement_id,
-                "settlement_start_date": _safe_get(row, "settlement-start-date") or None,
-                "settlement_end_date": _safe_get(row, "settlement-end-date") or None,
-                "deposit_date": _safe_get(row, "deposit-date") or None,
+                "settlement_start_date": _normalize_date(_safe_get(row, "settlement-start-date")),
+                "settlement_end_date": _normalize_date(_safe_get(row, "settlement-end-date")),
+                "deposit_date": _normalize_date(_safe_get(row, "deposit-date")),
                 "total_amount": total_amount,
                 "currency_code": _safe_get(row, "currency") or None,
                 "transaction_count": 0,  # Will be updated

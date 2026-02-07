@@ -980,11 +980,24 @@ def upsert_settlement_transactions(
     if not transactions:
         return 0
 
+    # Deduplicate by (marketplace_id, settlement_id, row_hash) within the batch
+    # Amazon settlement reports can have duplicate rows with identical field values
+    seen = set()
+    unique_transactions = []
+    for tx in transactions:
+        key = (tx["marketplace_id"], tx["settlement_id"], tx["row_hash"])
+        if key not in seen:
+            seen.add(key)
+            unique_transactions.append(tx)
+
+    if len(unique_transactions) < len(transactions):
+        print(f"  Deduplicated {len(transactions) - len(unique_transactions)} duplicate rows within batch")
+
     client = get_supabase_client()
     total = 0
 
-    for i in range(0, len(transactions), chunk_size):
-        chunk = transactions[i:i + chunk_size]
+    for i in range(0, len(unique_transactions), chunk_size):
+        chunk = unique_transactions[i:i + chunk_size]
         client.table("sp_settlement_transactions").upsert(
             chunk,
             on_conflict="marketplace_id,settlement_id,row_hash"
