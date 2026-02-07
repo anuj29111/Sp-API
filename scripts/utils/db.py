@@ -1043,7 +1043,8 @@ def upsert_reimbursements(
     """
     Batch upsert reimbursement rows.
 
-    Uses (marketplace_id, reimbursement_id) for dedup.
+    Uses (marketplace_id, reimbursement_id, sku) for dedup.
+    One reimbursement case can have multiple SKU line items.
 
     Args:
         rows: List of reimbursement dicts
@@ -1055,11 +1056,12 @@ def upsert_reimbursements(
     if not rows:
         return 0
 
-    # Deduplicate by (marketplace_id, reimbursement_id) within the batch
+    # Deduplicate by (marketplace_id, reimbursement_id, sku) within the batch
+    # One reimbursement case can cover multiple SKUs (multi-line items)
     seen = set()
     unique_rows = []
     for r in rows:
-        key = (r.get("marketplace_id"), r.get("reimbursement_id"))
+        key = (r.get("marketplace_id"), r.get("reimbursement_id"), r.get("sku") or "")
         if key not in seen:
             seen.add(key)
             unique_rows.append(r)
@@ -1074,7 +1076,7 @@ def upsert_reimbursements(
         chunk = unique_rows[i:i + chunk_size]
         client.table("sp_reimbursements").upsert(
             chunk,
-            on_conflict="marketplace_id,reimbursement_id"
+            on_conflict="marketplace_id,reimbursement_id,sku"
         ).execute()
         total += len(chunk)
 

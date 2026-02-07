@@ -107,7 +107,7 @@ def transform_reimbursement_rows(
             "case_id": row.get("case-id", "").strip() or None,
             "amazon_order_id": row.get("amazon-order-id", "").strip() or None,
             "reason": row.get("reason", "").strip() or None,
-            "sku": row.get("sku", "").strip() or None,
+            "sku": row.get("sku", "").strip() or "",  # NOT NULL — part of unique key
             "fnsku": row.get("fnsku", "").strip() or None,
             "asin": row.get("asin", "").strip() or None,
             "product_name": row.get("product-name", "").strip() or None,
