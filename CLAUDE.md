@@ -605,13 +605,11 @@ All systems are fully automated with no manual intervention required:
 
 ## Pending Tasks
 
-### Immediate: SQP/SCP Fixes & Remaining Tests
-1. ~~**Fix USA SQP upsert**~~ ✅ DONE — Reduced chunk_size from 500→200 rows, upserts per-batch instead of accumulated. Fixed `--force` flag to clear batch status.
-2. ~~**Re-run USA SQP**~~ ✅ DONE — 6,228 rows, 236 ASINs, 4,400 queries, 25/25 batches, 0 failures (Feb 7, 2026)
-3. ~~**Enable SQP backfill**~~ ✅ DONE — Cron already active at 1, 13 UTC. Confirmed running.
-4. **Monitor first automated Tuesday run** — next Tuesday 4 AM UTC will be the first real scheduled pull
+### Immediate: Monitor Automated Runs
+1. **Monitor first automated SQP Tuesday run** — next Tuesday 4 AM UTC will be the first real scheduled SQP pull
+2. **Monitor orders pipeline** — 6x/day orders-daily.yml is now running; verify it populates data consistently over the next few days
 
-### Phase 3 Testing: Financial Reports
+### Next: Phase 3 Testing — Financial Reports
 1. Run `settlement-backfill.yml` with `dry_run=true` to verify settlement listing works
 2. Run live with `since=2026-01-01` for recent data first
 3. Full backfill with `since=2024-01-01`
