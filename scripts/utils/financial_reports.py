@@ -24,6 +24,14 @@ from utils.inventory_reports import (
 )
 
 
+def _safe_get(row: dict, key: str, default: str = "") -> str:
+    """Safely get a string value from a row dict, handling None values."""
+    val = row.get(key, default)
+    if val is None:
+        return default
+    return str(val).strip()
+
+
 # Financial report types
 FINANCIAL_REPORT_TYPES = {
     "SETTLEMENT": "GET_V2_SETTLEMENT_REPORT_DATA_FLAT_FILE_V2",
@@ -174,12 +182,12 @@ def parse_settlement_rows(
     summary = None
 
     for row in rows:
-        settlement_id = row.get("settlement-id", "").strip()
+        settlement_id = _safe_get(row, "settlement-id")
         if not settlement_id:
             continue
 
         # Parse amount
-        amount_str = row.get("amount", "").strip()
+        amount_str = _safe_get(row, "amount")
         amount = None
         if amount_str:
             try:
@@ -188,7 +196,7 @@ def parse_settlement_rows(
                 pass
 
         # Parse quantity
-        qty_str = row.get("quantity-purchased", "").strip()
+        qty_str = _safe_get(row, "quantity-purchased")
         quantity = None
         if qty_str:
             try:
@@ -197,7 +205,7 @@ def parse_settlement_rows(
                 pass
 
         # Parse posted-date-time
-        posted_dt = row.get("posted-date-time", "").strip() or None
+        posted_dt = _safe_get(row, "posted-date-time") or None
 
         # Compute row hash for dedup
         row_hash = compute_settlement_row_hash(row)
@@ -205,28 +213,28 @@ def parse_settlement_rows(
         transaction = {
             "marketplace_id": marketplace_id,
             "settlement_id": settlement_id,
-            "settlement_start_date": row.get("settlement-start-date", "").strip() or None,
-            "settlement_end_date": row.get("settlement-end-date", "").strip() or None,
-            "deposit_date": row.get("deposit-date", "").strip() or None,
-            "transaction_type": row.get("transaction-type", "").strip() or None,
-            "order_id": row.get("order-id", "").strip() or None,
-            "merchant_order_id": row.get("merchant-order-id", "").strip() or None,
-            "adjustment_id": row.get("adjustment-id", "").strip() or None,
-            "shipment_id": row.get("shipment-id", "").strip() or None,
-            "marketplace_name": row.get("marketplace-name", "").strip() or None,
-            "sku": row.get("sku", "").strip() or None,
+            "settlement_start_date": _safe_get(row, "settlement-start-date") or None,
+            "settlement_end_date": _safe_get(row, "settlement-end-date") or None,
+            "deposit_date": _safe_get(row, "deposit-date") or None,
+            "transaction_type": _safe_get(row, "transaction-type") or None,
+            "order_id": _safe_get(row, "order-id") or None,
+            "merchant_order_id": _safe_get(row, "merchant-order-id") or None,
+            "adjustment_id": _safe_get(row, "adjustment-id") or None,
+            "shipment_id": _safe_get(row, "shipment-id") or None,
+            "marketplace_name": _safe_get(row, "marketplace-name") or None,
+            "sku": _safe_get(row, "sku") or None,
             "quantity_purchased": quantity,
-            "amount_type": row.get("amount-type", "").strip() or None,
-            "amount_description": row.get("amount-description", "").strip() or None,
+            "amount_type": _safe_get(row, "amount-type") or None,
+            "amount_description": _safe_get(row, "amount-description") or None,
             "amount": amount,
-            "currency_code": row.get("currency", "").strip() or None,
-            "fulfillment_id": row.get("fulfillment-id", "").strip() or None,
-            "posted_date": row.get("posted-date", "").strip() or None,
+            "currency_code": _safe_get(row, "currency") or None,
+            "fulfillment_id": _safe_get(row, "fulfillment-id") or None,
+            "posted_date": _safe_get(row, "posted-date") or None,
             "posted_date_time": posted_dt,
-            "order_item_code": row.get("order-item-code", "").strip() or None,
-            "merchant_order_item_id": row.get("merchant-order-item-id", "").strip() or None,
-            "merchant_adjustment_item_id": row.get("merchant-adjustment-item-id", "").strip() or None,
-            "promotion_id": row.get("promotion-id", "").strip() or None,
+            "order_item_code": _safe_get(row, "order-item-code") or None,
+            "merchant_order_item_id": _safe_get(row, "merchant-order-item-id") or None,
+            "merchant_adjustment_item_id": _safe_get(row, "merchant-adjustment-item-id") or None,
+            "promotion_id": _safe_get(row, "promotion-id") or None,
             "row_hash": row_hash,
             "import_id": import_id,
         }
@@ -235,7 +243,7 @@ def parse_settlement_rows(
 
         # Build summary from first row of this settlement
         if summary is None and settlement_id:
-            total_amount_str = row.get("total-amount", "").strip()
+            total_amount_str = _safe_get(row, "total-amount")
             total_amount = None
             if total_amount_str:
                 try:
@@ -246,11 +254,11 @@ def parse_settlement_rows(
             summary = {
                 "marketplace_id": marketplace_id,
                 "settlement_id": settlement_id,
-                "settlement_start_date": row.get("settlement-start-date", "").strip() or None,
-                "settlement_end_date": row.get("settlement-end-date", "").strip() or None,
-                "deposit_date": row.get("deposit-date", "").strip() or None,
+                "settlement_start_date": _safe_get(row, "settlement-start-date") or None,
+                "settlement_end_date": _safe_get(row, "settlement-end-date") or None,
+                "deposit_date": _safe_get(row, "deposit-date") or None,
                 "total_amount": total_amount,
-                "currency_code": row.get("currency", "").strip() or None,
+                "currency_code": _safe_get(row, "currency") or None,
                 "transaction_count": 0,  # Will be updated
                 "import_id": import_id,
             }
