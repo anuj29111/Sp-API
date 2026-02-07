@@ -138,17 +138,17 @@ def compute_settlement_row_hash(row: Dict[str, str]) -> str:
     key fields to create one.
     """
     hash_fields = [
-        row.get("settlement-id", ""),
-        row.get("transaction-type", ""),
-        row.get("order-id", ""),
-        row.get("sku", ""),
-        row.get("amount-type", ""),
-        row.get("amount-description", ""),
-        row.get("amount", ""),
-        row.get("posted-date-time", ""),
-        row.get("order-item-code", ""),
-        row.get("adjustment-id", ""),
-        row.get("promotion-id", ""),
+        row.get("settlement-id", "") or "",
+        row.get("transaction-type", "") or "",
+        row.get("order-id", "") or "",
+        row.get("sku", "") or "",
+        row.get("amount-type", "") or "",
+        row.get("amount-description", "") or "",
+        row.get("amount", "") or "",
+        row.get("posted-date-time", "") or "",
+        row.get("order-item-code", "") or "",
+        row.get("adjustment-id", "") or "",
+        row.get("promotion-id", "") or "",
     ]
     hash_string = "|".join(hash_fields)
     return hashlib.md5(hash_string.encode()).hexdigest()
