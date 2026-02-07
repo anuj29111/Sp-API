@@ -60,6 +60,27 @@ POP System (Advertising API) ─────────────────
 - 14-day attribution refresh catches updates to recent data
 - Re-pulls dates with 0 ASINs automatically
 
+### Phase 1.5: Near-Real-Time Orders ✅ COMPLETE & VERIFIED
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| **Orders Report** | ✅ Working | `GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL` |
+| **Daily Pull** | ✅ Running 6x/day | Every 4 hours UTC |
+| **S&T Protection** | ✅ Verified | Orders don't overwrite existing S&T data |
+| **data_source column** | ✅ Applied | Tracks 'orders' vs 'sales_traffic' per row |
+
+**Architecture:**
+- Orders report provides same-day sales data (~30min delay) — units + revenue only
+- Sales & Traffic report arrives 24-48hrs later with traffic metrics (sessions, page views, buy box %)
+- Both write to same `sp_daily_asin_data` table
+- `data_source` column tracks which report populated each row
+- When S&T arrives, it overwrites orders data with attribution-corrected values + traffic
+
+**Verified Test Results (Feb 7, 2026):**
+- Feb 6 (same-day): 116 ASINs, 369 units, $7,448.35 from orders report
+- Feb 5 (catch-up): 22 new ASINs added, 115 skipped (already had S&T data)
+- Correctly excluded 576+ Cancelled/Pending order lines
+
 ### Phase 2: Inventory Data ✅ COMPLETE (with known limitation)
 
 | Data | Source | Status | Records |
@@ -150,6 +171,7 @@ POP System (Advertising API) ─────────────────
 │   ├── pull_inventory_age.py      # Inventory age buckets (--fallback option)
 │   ├── pull_storage_fees.py       # Monthly storage fees
 │   ├── pull_sqp.py                # Weekly SQP/SCP search performance pull
+│   ├── pull_orders_daily.py       # 6x/day near-real-time orders (~30min delay)
 │   ├── pull_settlements.py        # Weekly settlement report pull (LIST → DOWNLOAD)
 │   ├── pull_reimbursements.py     # Weekly reimbursement report pull
 │   ├── pull_fba_fees.py           # Daily FBA fee estimates pull
@@ -165,6 +187,7 @@ POP System (Advertising API) ─────────────────
 │       ├── alerting.py            # Slack webhook notifications
 │       ├── auth.py                # SP-API token refresh
 │       ├── reports.py             # Sales & Traffic report helpers
+│       ├── orders_reports.py      # Near-real-time orders report helpers
 │       ├── sqp_reports.py         # SQP/SCP report helpers (Brand Analytics)
 │       ├── inventory_reports.py   # Inventory report helpers
 │       ├── financial_reports.py   # Settlement, Reimbursement, FBA Fee helpers
@@ -178,6 +201,7 @@ POP System (Advertising API) ─────────────────
 │   └── 004_financial_tables.sql   # Settlement, Reimbursement, FBA Fee tables (applied via MCP)
 ├── .github/workflows/
 │   ├── daily-pull.yml             # 4x/day - Sales & Traffic + view refresh
+│   ├── orders-daily.yml           # 6x/day - Near-real-time orders (~30min delay)
 │   ├── inventory-daily.yml        # 3 AM UTC - FBA + AWD + monthly snapshots
 │   ├── storage-fees-monthly.yml   # 5th of month - Storage Fees
 │   ├── historical-backfill.yml    # 4x/day - Auto backfill until complete
@@ -276,6 +300,21 @@ gh workflow run storage-fees-monthly.yml -f month=2025-12 -f marketplace=USA
 ```bash
 gh workflow run historical-backfill.yml -f mode=full   # Manual trigger
 # Usually no need - it runs automatically until backfill is complete
+```
+
+### Near-Real-Time Orders (`orders-daily.yml`)
+- **Schedule**: 6x/day at 0, 4, 8, 12, 16, 20 UTC
+- **Data Source**: `GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL` (~30min delay)
+- **Default**: Pulls today + yesterday per marketplace timezone
+- **S&T Protection**: Won't overwrite rows that already have Sales & Traffic data
+- **Timeout**: 60 minutes
+
+```bash
+gh workflow run orders-daily.yml                                    # All NA, today + yesterday
+gh workflow run orders-daily.yml -f marketplace=USA                 # Single marketplace
+gh workflow run orders-daily.yml -f date=2026-02-07                 # Specific date
+gh workflow run orders-daily.yml -f today_only=true                 # Skip yesterday catch-up
+gh workflow run orders-daily.yml -f marketplace=USA -f dry_run=true # Test without DB writes
 ```
 
 ### SQP/SCP Weekly Pull (`sqp-weekly.yml`)
@@ -389,6 +428,7 @@ gh workflow run financial-daily.yml -f dry_run=true                         # Te
 gh run list --workflow=daily-pull.yml --limit 5
 gh run list --workflow=inventory-daily.yml --limit 5
 gh run list --workflow=historical-backfill.yml --limit 5
+gh run list --workflow=orders-daily.yml --limit 5
 gh run list --workflow=sqp-weekly.yml --limit 5
 gh run list --workflow=sqp-backfill.yml --limit 5
 gh run list --workflow=settlements-weekly.yml --limit 5
@@ -402,6 +442,8 @@ gh run view <run_id> --log | tail -50
 # Manual triggers
 gh workflow run daily-pull.yml
 gh workflow run daily-pull.yml -f date=2026-02-05
+gh workflow run orders-daily.yml -f marketplace=USA
+gh workflow run orders-daily.yml -f marketplace=USA -f dry_run=true
 gh workflow run inventory-daily.yml -f report_type=all
 gh workflow run sqp-weekly.yml
 gh workflow run sqp-backfill.yml -f marketplace=CA -f report_type=SCP
@@ -414,6 +456,14 @@ gh workflow run financial-daily.yml
 ```sql
 -- Check sales data coverage
 SELECT MIN(date), MAX(date), COUNT(DISTINCT date) FROM sp_daily_asin_data;
+
+-- Check orders vs S&T data by date
+SELECT date, data_source, COUNT(*) as asins,
+       SUM(units_ordered) as units, ROUND(SUM(ordered_product_sales)::numeric, 2) as sales
+FROM sp_daily_asin_data
+WHERE date >= CURRENT_DATE - 3
+GROUP BY date, data_source
+ORDER BY date DESC, data_source;
 
 -- Check recent data by marketplace
 SELECT
@@ -525,6 +575,7 @@ All systems are fully automated with no manual intervention required:
 | System | Schedule | Status |
 |--------|----------|--------|
 | **Daily Sales Pull** | 4x/day (2, 8, 14, 20 UTC) | ✅ Running |
+| **Near-Real-Time Orders** | 6x/day (0, 4, 8, 12, 16, 20 UTC) | ✅ Running |
 | **14-Day Attribution Refresh** | 4x/day (with daily pull) | ✅ Running |
 | **Materialized View Refresh** | After each daily pull | ✅ Running |
 | **FBA/AWD Inventory** | 3 AM UTC daily | ✅ Running |
@@ -625,4 +676,4 @@ All systems are fully automated with no manual intervention required:
 
 ---
 
-*Last Updated: February 7, 2026 (Session 8 - SQP chunked upserts fixed, USA SQP verified working, backfill enabled)*
+*Last Updated: February 7, 2026 (Session 9 - Fixed 4 daily/backfill bugs, added near-real-time orders pipeline)*
