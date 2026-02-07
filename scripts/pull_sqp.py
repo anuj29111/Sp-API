@@ -141,9 +141,9 @@ def pull_for_marketplace(
             total_asins=len(asins)
         )
 
-        # Get existing batch status for resume
+        # Get existing batch status for resume (but NOT when forcing re-pull)
         existing_batch_status = {}
-        if existing and resume and existing.get("batch_status"):
+        if existing and resume and not force and existing.get("batch_status"):
             existing_batch_status = existing["batch_status"]
 
         total_rows_upserted = 0
