@@ -91,11 +91,11 @@ POP System (Advertising API) ─────────────────
 **SQP** = Per-ASIN, per-search-query: impressions, clicks, cart adds, purchases, shares, median prices
 **SCP** = Per-ASIN aggregate: same funnel + `search_traffic_sales` (revenue) + `conversion_rate`
 
-**Verified Test Results (Feb 6, 2026):**
+**Verified Test Results (Feb 7, 2026):**
 - CA SQP: 3,538 rows, 138 ASINs, 2,629 queries, 10/10 batches — all metrics populated
 - CA SCP: 154 rows, 10/10 batches — all metrics populated
 - USA SCP: 367 rows, 25/25 batches — working
-- USA SQP: 25/25 batches pulled from Amazon ✅, but DB upsert failed (6,233 rows too large for single POST — needs chunked upserts)
+- USA SQP: ✅ **6,228 rows**, 236 ASINs, 4,400 queries, 25/25 batches — fixed with per-batch upserts + 200-row chunks
 
 **Marketplaces:** USA + CA only (MX excluded - Brand Analytics not available)
 
@@ -533,7 +533,7 @@ All systems are fully automated with no manual intervention required:
 | **Historical Backfill** | 4x/day (0, 6, 12, 18 UTC) | 🔄 Running |
 | **SQP/SCP Weekly Pull** | Tuesdays 4 AM UTC | ✅ Verified & Running |
 | **SQP/SCP Monthly Pull** | 4th of month 4 AM UTC | ✅ Configured |
-| **SQP/SCP Backfill** | 2x/day (1, 13 UTC) | ✅ Ready to enable |
+| **SQP/SCP Backfill** | 2x/day (1, 13 UTC) | ✅ Running |
 | **Settlement Reports** | Tuesdays 7 AM UTC | ✅ Configured (needs first test) |
 | **Settlement Backfill** | Manual trigger | ⏸️ Ready (target: Jan 2024) |
 | **Reimbursements** | Mondays 6 AM UTC | ✅ Configured (needs first test) |
@@ -548,16 +548,16 @@ All systems are fully automated with no manual intervention required:
 - **GitHub Timeout**: Each backfill run has 5.5-hour limit (GitHub's max is 6 hours). Fixed by running 4x/day.
 - **Settlement Report Uniqueness**: Amazon provides no row-level unique ID — system uses MD5 hash of 11 key fields for deduplication.
 - **FBA Fee Estimates**: Only show CURRENT fees, not historical. Settlement reports are the source of truth for historical fee data.
-- **SQP Large Upserts**: USA SQP generates ~6,000+ rows per weekly pull. Single POST to Supabase REST API hits Cloudflare 502 at this size. Needs chunked upserts (~1-2K rows per batch).
+- **SQP Large Upserts**: USA SQP generates ~6,000+ rows per weekly pull. Fixed: upserts now use 200-row chunks and write per-batch (not accumulated). Verified working Feb 7, 2026.
 
 ---
 
 ## Pending Tasks
 
 ### Immediate: SQP/SCP Fixes & Remaining Tests
-1. **Fix USA SQP upsert** — 6,233 rows exceeded Supabase/Cloudflare POST limit. Need chunked upserts in `db.py` `upsert_sqp_data()` (split into batches of ~1000-2000 rows)
-2. **Re-run USA SQP** after chunked upsert fix to verify
-3. **Enable SQP backfill** workflow (`sqp-backfill.yml`) — code is ready, just needs the cron schedule uncommented or manually triggered
+1. ~~**Fix USA SQP upsert**~~ ✅ DONE — Reduced chunk_size from 500→200 rows, upserts per-batch instead of accumulated. Fixed `--force` flag to clear batch status.
+2. ~~**Re-run USA SQP**~~ ✅ DONE — 6,228 rows, 236 ASINs, 4,400 queries, 25/25 batches, 0 failures (Feb 7, 2026)
+3. ~~**Enable SQP backfill**~~ ✅ DONE — Cron already active at 1, 13 UTC. Confirmed running.
 4. **Monitor first automated Tuesday run** — next Tuesday 4 AM UTC will be the first real scheduled pull
 
 ### Phase 3 Testing: Financial Reports
@@ -625,4 +625,4 @@ All systems are fully automated with no manual intervention required:
 
 ---
 
-*Last Updated: February 6, 2026 (Session 7 - SQP/SCP verified & working)*
+*Last Updated: February 7, 2026 (Session 8 - SQP chunked upserts fixed, USA SQP verified working, backfill enabled)*
