@@ -600,20 +600,28 @@ All systems are fully automated with no manual intervention required:
 - **Settlement Report Uniqueness**: Amazon provides no row-level unique ID — system uses MD5 hash of 11 key fields for deduplication.
 - **FBA Fee Estimates**: Only show CURRENT fees, not historical. Settlement reports are the source of truth for historical fee data.
 - **SQP Large Upserts**: USA SQP generates ~6,000+ rows per weekly pull. Fixed: upserts now use 200-row chunks and write per-batch (not accumulated). Verified working Feb 7, 2026.
+- **Cross-Workflow Rate Limits**: Each GitHub Actions workflow has its own `RateLimitHandler` (per-process, no shared state). This is fine — total usage is ~150-200 createReport calls/day out of 1,440 available (1/min). Retry/backoff handles any 429 collisions.
 
 ---
 
 ## Pending Tasks
 
-### Immediate: Monitor Automated Runs
-1. **Monitor first automated SQP Tuesday run** — next Tuesday 4 AM UTC will be the first real scheduled SQP pull
-2. **Monitor orders pipeline** — 6x/day orders-daily.yml is now running; verify it populates data consistently over the next few days
-
-### Next: Phase 3 Testing — Financial Reports
+### Immediate: Phase 3 Testing — Financial Reports
 1. Run `settlement-backfill.yml` with `dry_run=true` to verify settlement listing works
 2. Run live with `since=2026-01-01` for recent data first
 3. Full backfill with `since=2024-01-01`
 4. Test `reimbursements-weekly.yml` and `financial-daily.yml`
+
+### SQP/SCP Backfill Monitoring
+- **SQP backfill is running** — 2x/day at 1, 13 UTC, ~2 periods per run
+- **CA HTTP 403 on older weeks** — Brand Analytics auth issue for historical data (not a code bug). Backfill marks these as failed and continues with newer weeks. May need Amazon support ticket if it persists.
+- **Estimated completion**: ~28 days from Feb 7, 2026 (target: ~113 weeks of weekly data)
+
+### Future: EU/UK Region Expansion
+1. Obtain `SP_REFRESH_TOKEN_EU` from Amazon Seller Central
+2. Update `auth.py` to support EU region token selection
+3. Add EU marketplace codes to `NA_MARKETPLACES` lists (or create `EU_MARKETPLACES`)
+4. Same SQP/SCP/reports logic works — `sqp_reports.py` already has EU endpoint + marketplace ID mappings
 
 ### Future: Phase 4 - Product Master Data
 1. **Product master table** for COGS/FBA fees (manual entry initially via Google Sheets)
@@ -674,4 +682,4 @@ All systems are fully automated with no manual intervention required:
 
 ---
 
-*Last Updated: February 7, 2026 (Session 9 - Fixed 4 daily/backfill bugs, added near-real-time orders pipeline)*
+*Last Updated: February 7, 2026 (Session 10 - Fixed SQP chunked upserts, per-batch writes, --force flag; verified USA SQP 6,228 rows; SQP backfill running)*
