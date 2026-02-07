@@ -1051,11 +1051,23 @@ def upsert_reimbursements(
     if not rows:
         return 0
 
+    # Deduplicate by (marketplace_id, reimbursement_id) within the batch
+    seen = set()
+    unique_rows = []
+    for r in rows:
+        key = (r.get("marketplace_id"), r.get("reimbursement_id"))
+        if key not in seen:
+            seen.add(key)
+            unique_rows.append(r)
+
+    if len(unique_rows) < len(rows):
+        print(f"  Deduplicated {len(rows) - len(unique_rows)} duplicate reimbursement rows within batch")
+
     client = get_supabase_client()
     total = 0
 
-    for i in range(0, len(rows), chunk_size):
-        chunk = rows[i:i + chunk_size]
+    for i in range(0, len(unique_rows), chunk_size):
+        chunk = unique_rows[i:i + chunk_size]
         client.table("sp_reimbursements").upsert(
             chunk,
             on_conflict="marketplace_id,reimbursement_id"
