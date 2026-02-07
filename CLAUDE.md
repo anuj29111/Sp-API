@@ -92,8 +92,10 @@ POP System (Advertising API) ─────────────────
 **SCP** = Per-ASIN aggregate: same funnel + `search_traffic_sales` (revenue) + `conversion_rate`
 
 **Verified Test Results (Feb 6, 2026):**
-- CA SQP: 3,538 rows, 138 ASINs, 2,629 queries, 10/10 batches
-- CA SCP: 154 rows, 10/10 batches, all metrics populated
+- CA SQP: 3,538 rows, 138 ASINs, 2,629 queries, 10/10 batches — all metrics populated
+- CA SCP: 154 rows, 10/10 batches — all metrics populated
+- USA SCP: 367 rows, 25/25 batches — working
+- USA SQP: 25/25 batches pulled from Amazon ✅, but DB upsert failed (6,233 rows too large for single POST — needs chunked upserts)
 
 **Marketplaces:** USA + CA only (MX excluded - Brand Analytics not available)
 
@@ -299,7 +301,7 @@ gh workflow run sqp-weekly.yml -f period_start=2026-01-26 -f period_end=2026-02-
 ```bash
 gh workflow run sqp-backfill.yml                                            # Default: 2 periods
 gh workflow run sqp-backfill.yml -f max_periods=3                           # More periods per run
-gh workflow run sqp-backfill.yml -f marketplace=MX -f report_type=SCP       # Small test
+gh workflow run sqp-backfill.yml -f marketplace=CA -f report_type=SCP       # Small test
 gh workflow run sqp-backfill.yml -f start_date=2024-01-01                   # From specific date
 ```
 
@@ -402,7 +404,7 @@ gh workflow run daily-pull.yml
 gh workflow run daily-pull.yml -f date=2026-02-05
 gh workflow run inventory-daily.yml -f report_type=all
 gh workflow run sqp-weekly.yml
-gh workflow run sqp-backfill.yml -f marketplace=MX -f report_type=SCP
+gh workflow run sqp-backfill.yml -f marketplace=CA -f report_type=SCP
 gh workflow run settlements-weekly.yml
 gh workflow run settlement-backfill.yml -f dry_run=true
 gh workflow run reimbursements-weekly.yml -f start_date=2024-01-01
@@ -459,6 +461,11 @@ FROM sp_sqp_pulls ORDER BY period_start DESC LIMIT 20;
 SELECT period_type, MIN(period_start), MAX(period_start), COUNT(DISTINCT period_start) as periods,
        COUNT(DISTINCT child_asin) as asins, COUNT(*) as rows
 FROM sp_sqp_data GROUP BY period_type;
+
+-- Check SCP data coverage
+SELECT period_type, MIN(period_start), MAX(period_start), COUNT(DISTINCT period_start) as periods,
+       COUNT(DISTINCT child_asin) as asins, COUNT(*) as rows
+FROM sp_scp_data GROUP BY period_type;
 
 -- Check suppressed ASINs
 SELECT marketplace_id, child_asin, error_type, occurrence_count
@@ -541,24 +548,31 @@ All systems are fully automated with no manual intervention required:
 - **GitHub Timeout**: Each backfill run has 5.5-hour limit (GitHub's max is 6 hours). Fixed by running 4x/day.
 - **Settlement Report Uniqueness**: Amazon provides no row-level unique ID — system uses MD5 hash of 11 key fields for deduplication.
 - **FBA Fee Estimates**: Only show CURRENT fees, not historical. Settlement reports are the source of truth for historical fee data.
+- **SQP Large Upserts**: USA SQP generates ~6,000+ rows per weekly pull. Single POST to Supabase REST API hits Cloudflare 502 at this size. Needs chunked upserts (~1-2K rows per batch).
 
 ---
 
 ## Pending Tasks
 
-### Next Priority: Phase 4 - Product Master Data
+### Immediate: SQP/SCP Fixes & Remaining Tests
+1. **Fix USA SQP upsert** — 6,233 rows exceeded Supabase/Cloudflare POST limit. Need chunked upserts in `db.py` `upsert_sqp_data()` (split into batches of ~1000-2000 rows)
+2. **Re-run USA SQP** after chunked upsert fix to verify
+3. **Enable SQP backfill** workflow (`sqp-backfill.yml`) — code is ready, just needs the cron schedule uncommented or manually triggered
+4. **Monitor first automated Tuesday run** — next Tuesday 4 AM UTC will be the first real scheduled pull
+
+### Phase 3 Testing: Financial Reports
+1. Run `settlement-backfill.yml` with `dry_run=true` to verify settlement listing works
+2. Run live with `since=2026-01-01` for recent data first
+3. Full backfill with `since=2024-01-01`
+4. Test `reimbursements-weekly.yml` and `financial-daily.yml`
+
+### Future: Phase 4 - Product Master Data
 1. **Product master table** for COGS/FBA fees (manual entry initially via Google Sheets)
 2. Map SKU → ASIN → COGS for CM1 calculation
 
 ### Future Phases
 1. **Phase 5**: CM1/CM2 calculation views (combine settlements + COGS + ad spend)
 2. **Phase 6**: Web dashboard integration
-
-### Immediate Testing Needed
-1. Run `settlement-backfill.yml` with `dry_run=true` to verify settlement listing works
-2. Run live with `since=2026-01-01` for recent data first
-3. Full backfill with `since=2024-01-01`
-4. Test `reimbursements-weekly.yml` and `financial-daily.yml`
 
 ---
 
