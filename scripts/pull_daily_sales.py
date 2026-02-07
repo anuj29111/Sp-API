@@ -363,11 +363,19 @@ def pull_region_data(
     completed = [r["marketplace"] for r in results if r["status"] == "completed"]
     failed = [r["marketplace"] for r in results if r["status"] == "failed"]
 
+    # Compute display_date safely (report_date is None when running on schedule)
+    if report_date:
+        display_date = report_date.isoformat()
+    elif results:
+        display_date = results[0].get("date", date.today().isoformat())
+    else:
+        display_date = date.today().isoformat()
+
     if failed:
         errors = {r["marketplace"]: r.get("error", "Unknown") for r in results if r["status"] == "failed"}
-        alert_partial("sales_traffic", report_date.isoformat(), completed, failed, errors)
+        alert_partial("sales_traffic", display_date, completed, failed, errors)
     else:
-        send_summary("sales_traffic", report_date.isoformat(), results, total_rows, duration)
+        send_summary("sales_traffic", display_date, results, total_rows, duration)
 
     return results
 

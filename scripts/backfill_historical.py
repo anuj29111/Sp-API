@@ -127,12 +127,15 @@ def get_backfill_status(marketplaces: List[str], start_date: date, end_date: dat
         if not mp_uuid:
             continue
 
-        # Count existing dates for this marketplace in range
-        result = client.table("sp_daily_asin_data") \
-            .select("date", count="exact") \
+        # Count existing DATES (not rows) for this marketplace in range
+        # Use sp_api_pulls table which has 1 row per date per marketplace
+        result = client.table("sp_api_pulls") \
+            .select("pull_date", count="exact") \
             .eq("marketplace_id", mp_uuid) \
-            .gte("date", start_date.isoformat()) \
-            .lte("date", end_date.isoformat()) \
+            .eq("status", "completed") \
+            .gt("asin_count", 0) \
+            .gte("pull_date", start_date.isoformat()) \
+            .lte("pull_date", end_date.isoformat()) \
             .execute()
 
         existing_count = result.count or 0
@@ -560,6 +563,11 @@ def main():
         skip_existing=not args.force,
         dry_run=args.dry_run
     )
+
+    # Exit with success if backfill is already complete (all dates exist)
+    if stats.get("already_complete"):
+        print("\n✅ Backfill already complete — nothing to do")
+        sys.exit(0)
 
     # Exit with error code only if NOTHING was processed (complete failure)
     # Individual date failures are OK - they'll be retried on next run

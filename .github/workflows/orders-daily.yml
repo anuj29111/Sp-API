@@ -1,0 +1,82 @@
+name: Near-Real-Time Orders Pull
+
+on:
+  # Run 6x daily for near-real-time sales data
+  # Every 4 hours: 0, 4, 8, 12, 16, 20 UTC
+  schedule:
+    - cron: '0 0,4,8,12,16,20 * * *'
+
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Date to pull (YYYY-MM-DD). Default: today + yesterday'
+        required: false
+      marketplace:
+        description: 'Specific marketplace (e.g., USA). Leave empty for all NA'
+        required: false
+      today_only:
+        description: 'Only pull today (skip yesterday catch-up)'
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Pull and aggregate but do not upsert to database'
+        type: boolean
+        default: false
+
+jobs:
+  pull-orders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Pull orders data
+        env:
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+          SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          CMD="python scripts/pull_orders_daily.py"
+
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            CMD="$CMD --date ${{ github.event.inputs.date }}"
+          fi
+
+          if [ -n "${{ github.event.inputs.marketplace }}" ]; then
+            CMD="$CMD --marketplace ${{ github.event.inputs.marketplace }}"
+          fi
+
+          if [ "${{ github.event.inputs.today_only }}" = "true" ]; then
+            CMD="$CMD --today-only"
+          fi
+
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            CMD="$CMD --dry-run"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
+
+      - name: Post summary
+        if: always()
+        run: |
+          echo "## Near-Real-Time Orders Pull Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** ${{ github.event.inputs.date || 'Today + yesterday (per marketplace TZ)' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Marketplace:** ${{ github.event.inputs.marketplace || 'All NA (USA, CA, MX)' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Dry Run:** ${{ github.event.inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY

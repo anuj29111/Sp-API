@@ -248,7 +248,8 @@ def upsert_asin_data(
             "unit_session_percentage_b2b": traffic.get("unitSessionPercentageB2B"),
 
             # Tracking
-            "import_id": import_id
+            "import_id": import_id,
+            "data_source": "sales_traffic"
         }
         rows.append(row)
 
@@ -346,6 +347,99 @@ def get_existing_pull(marketplace_code: str, report_date: date) -> Optional[Dict
     if result.data:
         return result.data[0]
     return None
+
+
+# =============================================================================
+# Orders Data Functions (near-real-time orders report)
+# =============================================================================
+
+def upsert_orders_asin_data(
+    rows: List[Dict],
+    marketplace_code: str,
+    report_date: date,
+    chunk_size: int = 500
+) -> int:
+    """
+    Upsert ASIN-level sales data from the orders report.
+
+    Orders data only includes sales columns (units, revenue) — no traffic.
+    If a row already has data_source='sales_traffic' (from S&T report),
+    we skip it to avoid overwriting more complete data with less accurate orders data.
+
+    Args:
+        rows: List of aggregated order dicts with keys:
+              child_asin, units_ordered, ordered_product_sales,
+              total_order_items, currency_code
+        marketplace_code: Marketplace code (e.g., 'USA')
+        report_date: The date of the data
+        chunk_size: Number of rows per upsert batch
+
+    Returns:
+        Number of rows upserted (excluding skipped S&T rows)
+    """
+    if not rows:
+        return 0
+
+    client = get_supabase_client()
+    marketplace_id = MARKETPLACE_UUIDS[marketplace_code]
+
+    # Step 1: Check which ASINs already have S&T data for this date/marketplace
+    # We don't want to overwrite S&T data (which has traffic metrics) with orders data
+    existing = client.table("sp_daily_asin_data") \
+        .select("child_asin") \
+        .eq("marketplace_id", marketplace_id) \
+        .eq("date", report_date.isoformat()) \
+        .eq("data_source", "sales_traffic") \
+        .execute()
+
+    st_asins = set(r["child_asin"] for r in existing.data) if existing.data else set()
+
+    # Step 2: Filter out ASINs that already have S&T data
+    filtered_rows = []
+    skipped = 0
+    for row in rows:
+        if row.get("child_asin") in st_asins:
+            skipped += 1
+            continue
+
+        filtered_rows.append({
+            "date": report_date.isoformat(),
+            "marketplace_id": marketplace_id,
+            "child_asin": row["child_asin"],
+            "parent_asin": row.get("parent_asin"),
+            "units_ordered": row.get("units_ordered", 0),
+            "ordered_product_sales": row.get("ordered_product_sales", 0),
+            "total_order_items": row.get("total_order_items", 0),
+            "currency_code": row.get("currency_code", "USD"),
+            "data_source": "orders"
+        })
+
+    if skipped > 0:
+        print(f"  ⏭️  Skipped {skipped} ASINs (already have S&T data)")
+
+    # Step 3: Upsert in chunks
+    if not filtered_rows:
+        return 0
+
+    total = 0
+    num_chunks = (len(filtered_rows) + chunk_size - 1) // chunk_size
+
+    for i in range(0, len(filtered_rows), chunk_size):
+        chunk = filtered_rows[i:i + chunk_size]
+        chunk_num = i // chunk_size + 1
+        try:
+            client.table("sp_daily_asin_data").upsert(
+                chunk,
+                on_conflict="date,marketplace_id,child_asin"
+            ).execute()
+            total += len(chunk)
+            if num_chunks > 1:
+                print(f"    [upsert chunk {chunk_num}/{num_chunks}: {len(chunk)} rows OK]", flush=True)
+        except Exception as e:
+            print(f"    [upsert chunk {chunk_num}/{num_chunks}: FAILED - {str(e)[:200]}]", flush=True)
+            raise
+
+    return total
 
 
 # =============================================================================

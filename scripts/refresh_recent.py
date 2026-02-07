@@ -258,9 +258,13 @@ def main():
         region=args.region
     )
 
-    # Exit with error code if any failed
-    if stats["failed"] > 0:
+    # Exit with error code only if majority of requests failed
+    # Individual failures are expected (rate limits, transient errors)
+    if stats["failed"] > 0 and stats["failed"] > stats.get("completed", 0):
+        print(f"\n❌ Majority of requests failed ({stats['failed']} failed vs {stats.get('completed', 0)} completed)")
         sys.exit(1)
+    elif stats["failed"] > 0:
+        print(f"\n⚠️  {stats['failed']} requests failed but {stats.get('completed', 0)} completed — treating as success")
 
 
 if __name__ == "__main__":
