@@ -63,7 +63,7 @@ from utils.db import (
 DEFAULT_MARKETPLACES = ["USA", "CA", "MX"]
 
 # Rate limit between report downloads (seconds)
-DOWNLOAD_DELAY = 5  # getReportDocument rate = 2/sec, but be safe
+DOWNLOAD_DELAY = 10  # Increased from 5s - was getting 429s with 11 reports
 
 
 def get_default_since_date() -> str:

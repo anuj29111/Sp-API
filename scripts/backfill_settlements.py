@@ -62,7 +62,7 @@ DEFAULT_MARKETPLACES = ["USA", "CA", "MX"]
 DEFAULT_SINCE = "2024-01-01"
 
 # Rate limits
-DOWNLOAD_DELAY = 5        # Seconds between report downloads
+DOWNLOAD_DELAY = 10       # Seconds between report downloads (increased from 5s - was getting 429s)
 MARKETPLACE_DELAY = 10    # Seconds between marketplaces
 
 # GitHub Actions timeout safety
