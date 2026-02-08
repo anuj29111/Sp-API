@@ -1,9 +1,10 @@
 name: SQP Historical Backfill
 
 on:
-  # Run 2x/day offset from daily pulls (which run at 2, 8, 14, 20 UTC)
+  # Run 3x/day, spaced 8hrs apart, avoiding other workflow windows
+  # Daily pulls: 2,8,14,20 | Backfill: 0,6,12,18 | Orders: 0,4,8,12,16,20
   schedule:
-    - cron: '0 1,13 * * *'
+    - cron: '0 1,9,17 * * *'
 
   workflow_dispatch:
     inputs:

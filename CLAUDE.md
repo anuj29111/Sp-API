@@ -350,7 +350,7 @@ gh workflow run sqp-weekly.yml -f period_start=2026-01-26 -f period_end=2026-02-
 ```
 
 ### SQP/SCP Backfill (`sqp-backfill.yml`)
-- **Schedule**: 2x/day at 1, 13 UTC (offset from daily pulls)
+- **Schedule**: 3x/day at 1, 9, 17 UTC (8hrs apart, avoiding other workflows)
 - **Default**: 2 periods per run (~3 hours), latest-first
 - **Timeout**: 240 minutes
 - **Auto-exits**: When >99% of periods are complete
@@ -602,7 +602,7 @@ All systems are fully automated with no manual intervention required:
 | **Historical Backfill** | 4x/day (0, 6, 12, 18 UTC) | 🔄 Running |
 | **SQP/SCP Weekly Pull** | Tuesdays 4 AM UTC | ✅ Verified & Running |
 | **SQP/SCP Monthly Pull** | 4th of month 4 AM UTC | ✅ Configured |
-| **SQP/SCP Backfill** | 2x/day (1, 13 UTC) | ✅ Running |
+| **SQP/SCP Backfill** | 3x/day (1, 9, 17 UTC) | ✅ Running |
 | **Settlement Reports** | Tuesdays 7 AM UTC | ✅ Verified & Running (536K tx) |
 | **Settlement Backfill** | Manual trigger | ✅ Complete (90-day max lookback) |
 | **Reimbursements** | Mondays 6 AM UTC | ⚠️ USA/CA FATAL (MX working, 914 rows) |
@@ -846,7 +846,7 @@ Supabase Data:
 4. Write SUMIFS formulas for new dump sheets (Rolling, Inventory, Fees)
 
 ### Monitoring: Automated Systems
-- **SQP/SCP Backfill** — Running 2x/day. Estimated completion ~28 days from Feb 7, 2026. CA HTTP 403 on older weeks (Brand Analytics auth issue, not code bug).
+- **SQP/SCP Backfill** — Running 3x/day (1, 9, 17 UTC). Estimated completion ~19 days from Feb 8, 2026. CA HTTP 403 on older weeks (Brand Analytics auth issue, not code bug).
 - **Reimbursements** — USA/CA return FATAL (Amazon API issue). MX working (914 rows). Cron retries every Monday 6 AM UTC. Consider Amazon support ticket if persists.
 - **Settlement 90-day lookback** — API only allows 90-day lookback. Current coverage: Oct 2025 → present. Jan 2024 → Oct 2025 NOT available via API. Options: manual Seller Central download, GorillaROI export, or accept rolling window.
 
