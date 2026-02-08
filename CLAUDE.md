@@ -138,7 +138,7 @@ POP System (Advertising API) ─────────────────
 |-------------|---------------|--------|--------|---------|
 | **Settlement Reports** | `GET_V2_SETTLEMENT_REPORT_DATA_FLAT_FILE_V2` | `pull_settlements.py` / `backfill_settlements.py` | ✅ **Working** | 536,744 tx, 21 summaries |
 | **Reimbursements** | `GET_FBA_REIMBURSEMENTS_DATA` | `pull_reimbursements.py` | ⚠️ **Partial** (API FATAL on USA/CA) | 914 (MX only) |
-| **FBA Fee Estimates** | `GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA` | `pull_fba_fees.py` | ⚠️ **Partial** (API FATAL on USA) | 1,040 (CA+MX) |
+| **FBA Fee Estimates** | `GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA` | `pull_fba_fees.py` | ✅ **Working** (all 3 NA) | 1,560 (520/marketplace) |
 | **Storage Fees** | `GET_FBA_STORAGE_FEE_CHARGES_DATA` | `pull_storage_fees.py` | ✅ Working (Phase 2) | 14,227 |
 
 **Settlement Reports (verified Feb 7, 2026):**
@@ -156,10 +156,10 @@ POP System (Advertising API) ─────────────────
 - Cron retries Monday 6 AM UTC automatically
 
 **FBA Fee Estimates:**
-- CA + MX working (520 SKUs each). USA returns FATAL (Amazon API issue, same as inventory age).
+- All 3 NA marketplaces working (520 SKUs each, 1,560 total). USA FATAL resolved ~Feb 8, 2026.
 - Shows CURRENT fees per ASIN — for projections only, NOT historical CM2
 - `dataStartTime` must be 72+ hours prior
-- Cron retries daily 5 AM UTC
+- Runs daily 5 AM UTC
 
 ### Phase 4: Product Master Data ⏸️ PENDING
 
@@ -220,6 +220,8 @@ POP System (Advertising API) ─────────────────
 │   ├── settlement-backfill.yml    # Manual - Backfill settlements to Jan 2024
 │   ├── reimbursements-weekly.yml  # Mondays 6 AM UTC - Reimbursement reports
 │   └── financial-daily.yml        # Daily 5 AM UTC - FBA fee estimates
+├── google-sheets/
+│   └── supabase_sales.gs          # Apps Script for Google Sheets integration
 ├── requirements.txt
 └── CLAUDE.md
 ```
@@ -266,6 +268,13 @@ POP System (Advertising API) ─────────────────
 | `sp_reimbursements` | Per-SKU reimbursement records | `(marketplace_id, reimbursement_id, sku)` | `reason`, `amount_total`, `sku`, `asin`, `quantity_reimbursed_*` |
 | `sp_fba_fee_estimates` | Current fee estimates per ASIN | `(marketplace_id, sku)` | `estimated_fee_total`, `estimated_referral_fee_per_unit`, `estimated_pick_pack_fee_per_unit`, `product_size_tier` |
 | `sp_financial_pulls` | Pull tracking for all financial reports | Auto-increment | `report_type`, `settlement_id`, `status`, `row_count` |
+
+### Google Sheets Helper Views (created via Supabase MCP)
+| View | Purpose | Source Tables |
+|------|---------|---------------|
+| `sp_storage_fees_by_asin` | Aggregates per-FC storage fees → per-ASIN totals | `sp_storage_fees` |
+| `sp_settlement_fees_by_sku` | Per-SKU avg FBA + referral fees from settlement data | `sp_settlement_transactions` |
+| `sp_sku_asin_map` | Canonical SKU→ASIN mapping from all available sources | FBA inv + fee est + storage |
 
 ---
 
@@ -597,7 +606,7 @@ All systems are fully automated with no manual intervention required:
 | **Settlement Reports** | Tuesdays 7 AM UTC | ✅ Verified & Running (536K tx) |
 | **Settlement Backfill** | Manual trigger | ✅ Complete (90-day max lookback) |
 | **Reimbursements** | Mondays 6 AM UTC | ⚠️ USA/CA FATAL (MX working, 914 rows) |
-| **FBA Fee Estimates** | Daily 5 AM UTC | ⚠️ USA FATAL (CA+MX working, 1,040 rows) |
+| **FBA Fee Estimates** | Daily 5 AM UTC | ✅ Working (all 3 NA, 1,560 rows) |
 
 ---
 
@@ -611,56 +620,9 @@ All systems are fully automated with no manual intervention required:
 - **Settlement Architecture**: Amazon's LIST API returns ALL NA-region settlements regardless of marketplace filter. Scripts run once per region (not per marketplace) and attribute each row to the correct marketplace via `marketplace-name` field with currency fallback.
 - **FBA Fee Estimates**: Only show CURRENT fees, not historical. Settlement reports are the source of truth for historical fee data.
 - **Reimbursement Multi-SKU**: One reimbursement case can cover multiple SKUs. Unique constraint is `(marketplace_id, reimbursement_id, sku)`.
-- **Amazon API FATAL**: USA FBA Fee Estimates, USA/CA Reimbursements, and Inventory Age all return FATAL status. This is a known widespread Amazon API issue. Cron retries automatically.
+- **Amazon API FATAL**: USA/CA Reimbursements and Inventory Age return FATAL status. This is a known widespread Amazon API issue. Cron retries automatically. FBA Fee Estimates now working for all 3 NA marketplaces (resolved ~Feb 8, 2026).
 - **SQP Large Upserts**: USA SQP generates ~6,000+ rows per weekly pull. Fixed: upserts now use 200-row chunks and write per-batch (not accumulated). Verified working Feb 7, 2026.
 - **Cross-Workflow Rate Limits**: Each GitHub Actions workflow has its own `RateLimitHandler` (per-process, no shared state). This is fine — total usage is ~150-200 createReport calls/day out of 1,440 available (1/min). Retry/backoff handles any 429 collisions.
-
----
-
-## Pending Tasks
-
-### Immediate: Monitor Reimbursement API FATAL Resolution
-- USA and CA reimbursements return FATAL (Amazon API issue, not code). MX succeeded.
-- Cron retries every Monday 6 AM UTC. Monitor for first success.
-- If FATAL persists >1 week, consider Amazon support ticket or Seller Central manual download.
-
-### SQP/SCP Backfill Monitoring
-- **SQP backfill is running** — 2x/day at 1, 13 UTC, ~2 periods per run
-- **CA HTTP 403 on older weeks** — Brand Analytics auth issue for historical data (not a code bug). Backfill marks these as failed and continues with newer weeks. May need Amazon support ticket if it persists.
-- **Estimated completion**: ~28 days from Feb 7, 2026 (target: ~113 weeks of weekly data)
-
-### Settlement Historical Data Gap
-- API only allows 90-day lookback for settlement report listing
-- Current coverage: Oct 2025 → present (~3 months)
-- Jan 2024 → Oct 2025 data NOT available via API
-- Options: (1) Manual download from Seller Central, (2) GorillaROI historical export, (3) Accept 90-day rolling window
-
-### Future: EU/UK Region Expansion
-1. Obtain `SP_REFRESH_TOKEN_EU` from Amazon Seller Central
-2. Update `auth.py` to support EU region token selection
-3. Add EU marketplace codes to `NA_MARKETPLACES` lists (or create `EU_MARKETPLACES`)
-4. Same SQP/SCP/reports logic works — `sqp_reports.py` already has EU endpoint + marketplace ID mappings
-
-### Future: Phase 4 - Product Master Data
-1. **Product master table** for COGS/FBA fees (manual entry initially via Google Sheets)
-2. Map SKU → ASIN → COGS for CM1 calculation
-
-### Future Phases
-1. **Phase 5**: CM1/CM2 calculation views (combine settlements + COGS + ad spend)
-2. **Phase 6**: Web dashboard integration
-
----
-
-## GitHub Secrets
-
-| Secret | Purpose |
-|--------|---------|
-| `SP_LWA_CLIENT_ID` | Amazon SP-API credentials |
-| `SP_LWA_CLIENT_SECRET` | Amazon SP-API credentials |
-| `SP_REFRESH_TOKEN_NA` | North America refresh token |
-| `SUPABASE_URL` | Database URL |
-| `SUPABASE_SERVICE_KEY` | Database access |
-| `SLACK_WEBHOOK_URL` | Slack alerts for failures |
 
 ---
 
@@ -668,7 +630,7 @@ All systems are fully automated with no manual intervention required:
 
 **Replaces:** GorillaROI ($600/month)
 
-### Architecture: Tiered Approach
+### Architecture: Flat Dump Sheets + SUMIFS Formulas
 
 ```
 SUPABASE DATABASE
@@ -676,15 +638,17 @@ SUPABASE DATABASE
         ├─── DAILY DATA (Direct to sheet)
         │    Script auto-detects dates, writes directly
         │
-        └─── WEEKLY/MONTHLY DATA (SP Data sheets)
-             Script dumps to "SP Data USA" etc.
-             User SUMIFS formulas pull from it
+        ├─── SP Data {country}      - Weekly/Monthly sales + traffic
+        ├─── SP Rolling {country}   - Rolling 7/14/30/60 day metrics
+        ├─── SP Inventory {country} - Latest FBA + AWD inventory snapshot
+        └─── SP Fees {country}      - Per-unit fee estimates + settlement actuals + storage
 ```
 
 **Why this design:**
-- Daily data: Rolling 30-day window, direct write is simpler
-- Weekly/Monthly: Static historical data, row-based storage allows flexible formulas
+- All data dumped to flat sheets → user writes SUMIFS/INDEX formulas to pull what they need
 - No GorillaROI-style per-cell API calls = no timeouts
+- Pagination support: handles >1000 rows (USA weekly has 20,760+ rows)
+- Daily data: Rolling 30-day window, direct write is simpler
 
 ### Google Sheet
 
@@ -711,14 +675,31 @@ SUPABASE DATABASE
 ### Apps Script Menu
 
 ```
-Supabase Data Menu:
+Supabase Data:
+├── Test Connection
 ├── Daily Sheets
 │   ├── Refresh Current Sheet (auto-detects dates)
 │   └── Refresh TESTING Sheet
-├── Weekly/Monthly Data
+├── Sales (Weekly/Monthly)
 │   ├── Refresh SP Data USA
 │   ├── Refresh SP Data CA
 │   └── Refresh SP Data MX
+├── Rolling Averages
+│   ├── Refresh SP Rolling USA
+│   ├── Refresh SP Rolling CA
+│   └── Refresh SP Rolling MX
+├── Inventory
+│   ├── Refresh SP Inventory USA
+│   ├── Refresh SP Inventory CA
+│   └── Refresh SP Inventory MX
+├── Fees & Costs
+│   ├── Refresh SP Fees USA
+│   ├── Refresh SP Fees CA
+│   └── Refresh SP Fees MX
+├── Refresh ALL
+│   ├── Refresh ALL USA
+│   ├── Refresh ALL CA
+│   └── Refresh ALL MX
 ├── Debug
 │   ├── Check Sheet Dates
 │   └── Check Sheet ASINs
@@ -731,8 +712,12 @@ Supabase Data Menu:
 |---------|--------|-------|
 | Supabase connection | ✅ Working | Test connection passes |
 | Daily sheet refresh | ✅ Working | Auto-detects date columns, returns 0 (not blank) |
-| SP Data USA sheet | ✅ Working | 907 monthly + 1959 weekly rows loaded |
-| SP Data CA/MX | ✅ Ready | Menu functions ready, run when needed |
+| Pagination (>1000 rows) | ✅ Fixed | Range header pagination, Content-Range parsing |
+| SP Data USA sheet | ✅ Working | ~6,959 monthly + ~20,760 weekly rows (with pagination) |
+| SP Data CA/MX | ✅ Ready | Menu functions ready |
+| SP Rolling sheets | ✅ Ready | USA: ~569 rows, CA: ~299, MX: ~157 |
+| SP Inventory sheets | ✅ Ready | FBA + AWD joined by SKU, ~50 rows/country |
+| SP Fees sheets | ✅ Ready | Fee estimates + settlement actuals + storage |
 | SUMIFS formulas | ✅ Working | Jan/Feb 2026 pulling correctly |
 
 ### Formula for Monthly Data (SP Data sheet)
@@ -763,6 +748,78 @@ Supabase Data Menu:
 | J | avg_buy_box_percentage |
 | K | avg_conversion_rate |
 
+**SP Rolling columns reference:**
+| Col | Field | Source |
+|-----|-------|--------|
+| A | child_asin | sp_rolling_asin_metrics_mat |
+| B | parent_asin | sp_rolling_asin_metrics_mat |
+| C | currency | currency_code |
+| D-H | units_7d, revenue_7d, avg_units_7d, sessions_7d, conversion_7d | 7-day window |
+| I-M | units_14d, revenue_14d, avg_units_14d, sessions_14d, conversion_14d | 14-day window |
+| N-R | units_30d, revenue_30d, avg_units_30d, sessions_30d, conversion_30d | 30-day window |
+| S-W | units_60d, revenue_60d, avg_units_60d, sessions_60d, conversion_60d | 60-day window |
+
+**SP Inventory columns reference:**
+| Col | Field | Source |
+|-----|-------|--------|
+| A | asin | sp_fba_inventory |
+| B | sku | sp_fba_inventory |
+| C | product_name | sp_fba_inventory |
+| D | fba_fulfillable | fulfillable_quantity |
+| E | fba_reserved | reserved_quantity |
+| F | fba_inbound_working | inbound_working_quantity |
+| G | fba_inbound_shipped | inbound_shipped_quantity |
+| H | fba_inbound_receiving | inbound_receiving_quantity |
+| I | fba_unsellable | unsellable_quantity |
+| J | fba_total | total_quantity |
+| K | awd_onhand | total_onhand_quantity (joined via SKU) |
+| L | awd_inbound | total_inbound_quantity |
+| M | awd_available | available_quantity |
+| N | awd_total | total_quantity |
+
+**SP Fees columns reference:**
+| Col | Field | Source | Purpose |
+|-----|-------|--------|---------|
+| A | asin | sp_fba_fee_estimates | |
+| B | sku | sp_fba_fee_estimates | |
+| C | product_size_tier | sp_fba_fee_estimates | |
+| D | your_price | sp_fba_fee_estimates | Current listing price |
+| E | est_fee_total | estimated_fee_total | Total per-unit fee (referral + FBA) |
+| F | est_referral_per_unit | estimated_referral_fee_per_unit | Referral fee component |
+| G | est_fba_per_unit | est_fee_total - referral (computed) | **FBA fee for CM1** |
+| H | settle_avg_fba_per_unit | sp_settlement_fees_by_sku | Actual avg FBA fee (negative) |
+| I | settle_avg_referral_per_unit | sp_settlement_fees_by_sku | Actual avg referral (negative) |
+| J | settle_fba_qty_basis | sp_settlement_fees_by_sku | Units the avg is based on |
+| K | storage_fee_latest_month | sp_storage_fees_by_asin | Monthly storage cost |
+| L | storage_avg_qty_on_hand | sp_storage_fees_by_asin | Avg units stored |
+
+### Database Views for Google Sheets
+
+3 views created (via Supabase MCP, not migration file) to support the dump sheets:
+
+| View | Purpose | Row Count | Source |
+|------|---------|-----------|--------|
+| `sp_storage_fees_by_asin` | Aggregates per-FC storage → per-ASIN | ~202 | `sp_storage_fees` |
+| `sp_settlement_fees_by_sku` | Per-SKU avg FBA + referral fees from settlements | ~373 | `sp_settlement_transactions` |
+| `sp_sku_asin_map` | Canonical SKU→ASIN mapping from all sources | ~1,669 | FBA inv + fee est + storage |
+
+**RLS Policies Added (anon read):**
+- `sp_fba_inventory` — anon SELECT
+- `sp_awd_inventory` — anon SELECT
+- `sp_storage_fees` — anon SELECT
+- `sp_settlement_transactions` — RLS disabled (no policy needed)
+- `sp_fba_fee_estimates` — RLS disabled (no policy needed)
+
+### Key Technical Details
+
+**Pagination Fix:** Supabase REST API returns max 1000 rows by default. `fetchAllFromSupabase()` uses `Range: 0-999` header + `Prefer: count=exact`, reads `Content-Range` response header for total count, loops with offset increments. Fixes USA weekly (20,760 rows) and monthly (6,959 rows) that were previously silently truncated to 1,000.
+
+**FBA Fee Computation:** `est_fba_per_unit = est_fee_total - est_referral_per_unit`. If `pick_pack_fee` + `weight_handling_fee` are available (CA/MX), uses those instead (more accurate).
+
+**AWD Inventory Join:** AWD table has SKU only (no ASIN). Script joins AWD to FBA by SKU first. Unmatched AWD SKUs get ASIN via `sp_sku_asin_map` view. AWD is USA-only (~62 SKUs).
+
+**Settlement Fees:** Negative values (Amazon charges). GorillaROI shows ~$6.10 for 40 Chalk 6mm; settlement avg shows $6.04; fee estimate shows $5.82. Both sources included so user can choose.
+
 ### Pending: Formula Integration
 
 1. **Date format mismatch** - Header shows "Dec25" (text), SP Data has "2025-12-01". Formula needs to convert. Working formula provided above.
@@ -773,29 +830,41 @@ Supabase Data Menu:
 
 ## Pending Tasks
 
-### Immediate: Google Sheets Formula Refinement
+### Immediate: Google Sheets — Copy Script & Test Dumps
+1. Copy updated `supabase_sales.gs` from `/Sp-API/google-sheets/supabase_sales.gs` to Apps Script editor
+2. Run `refreshSPDataUSA()` — verify row count >1000 (should be ~27,700 with pagination fix)
+3. Run `refreshRollingUSA()` — verify ~569 rows with 7/14/30/60 day data
+4. Run `refreshInventoryUSA()` — verify ~50 rows with FBA + AWD columns
+5. Run `refreshFeesUSA()` — verify fee estimates + settlement + storage populated
+6. Run CA and MX refreshes
+7. Verify fee data accuracy against GorillaROI (e.g., 40 Chalk 6mm ≈ $6.10/unit)
+
+### Next: Google Sheets Formula Refinement
 1. Test the date conversion formula for older months (Dec25, Nov25, etc.)
 2. Create unified formula that checks SP Data first, falls back to Archive
 3. Consider adding hidden row with "yyyy-mm-dd" dates for simpler formulas
+4. Write SUMIFS formulas for new dump sheets (Rolling, Inventory, Fees)
 
-### Phase 3 Testing — Financial Reports
-1. Run `settlement-backfill.yml` with `dry_run=true` to verify settlement listing works
-2. Run live with `since=2026-01-01` for recent data first
-3. Full backfill with `since=2024-01-01`
-4. Test `reimbursements-weekly.yml` and `financial-daily.yml`
+### Monitoring: Automated Systems
+- **SQP/SCP Backfill** — Running 2x/day. Estimated completion ~28 days from Feb 7, 2026. CA HTTP 403 on older weeks (Brand Analytics auth issue, not code bug).
+- **Reimbursements** — USA/CA return FATAL (Amazon API issue). MX working (914 rows). Cron retries every Monday 6 AM UTC. Consider Amazon support ticket if persists.
+- **Settlement 90-day lookback** — API only allows 90-day lookback. Current coverage: Oct 2025 → present. Jan 2024 → Oct 2025 NOT available via API. Options: manual Seller Central download, GorillaROI export, or accept rolling window.
 
-### SQP/SCP Backfill Monitoring
-- **SQP backfill is running** — 2x/day at 1, 13 UTC, ~2 periods per run
-- **Estimated completion**: ~28 days from Feb 7, 2026
+### Future: Phase 4 — Product Master Data & COGS
+1. Product master table for COGS (manual entry initially via Google Sheets)
+2. Map SKU → ASIN → COGS for CM1 calculation
+
+### Future: Phase 5 — CM1/CM2 Calculation Engine
+1. CM1/CM2 calculation views (combine settlements + COGS + ad spend from POP)
+2. Organic Sales = Total Sales - PPC Sales
+3. True TACOS = Ad Spend / Total Sales
+
+### Future: Phase 6 — Web Dashboard
 
 ### Future: EU/UK Region Expansion
 1. Obtain `SP_REFRESH_TOKEN_EU` from Amazon Seller Central
 2. Update `auth.py` to support EU region token selection
-
-### Future Phases
-1. **Phase 4**: Product master table for COGS
-2. **Phase 5**: CM1/CM2 calculation views
-3. **Phase 6**: Web dashboard integration
+3. Add EU marketplace codes (scripts already have EU endpoint + marketplace ID mappings)
 
 ---
 
@@ -812,4 +881,4 @@ Supabase Data Menu:
 
 ---
 
-*Last Updated: February 7, 2026 (Session 12 - Phase 3 Financial Reports tested & verified. Settlements: 536K tx across 32 settlements. Fixed marketplace attribution bug + reimbursement multi-SKU constraint. Discovered 90-day API lookback limit.)*
+*Last Updated: February 8, 2026 (Session 13 — Google Sheets expansion: Added SP Rolling, SP Inventory, SP Fees dump sheets + Refresh ALL. Fixed critical pagination bug (USA weekly 20,760 rows silently truncated to 1,000). Created 3 DB views (sp_storage_fees_by_asin, sp_settlement_fees_by_sku, sp_sku_asin_map). Added anon RLS policies for inventory/storage tables. FBA Fee Estimates now working for all 3 NA (was FATAL for USA). Cleaned up stale pending tasks and removed duplicates.)*
