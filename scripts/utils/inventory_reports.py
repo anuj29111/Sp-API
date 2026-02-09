@@ -316,3 +316,71 @@ def pull_storage_fee_report(
     rows = download_report(access_token, result["reportDocumentId"], region)
 
     return rows
+
+
+def pull_fba_inventory_report(
+    access_token: str,
+    marketplace_code: str,
+    region: str = "NA"
+) -> List[Dict[str, Any]]:
+    """
+    Pull GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA report for a marketplace.
+
+    This report includes EU Pan-European FBA (EFN) fields:
+    - afn-fulfillable-quantity: Total fulfillable (local + remote)
+    - afn-fulfillable-quantity-local: Units in LOCAL FCs (same marketplace)
+    - afn-fulfillable-quantity-remote: Units in REMOTE FCs (cross-border EFN)
+
+    These fields give the correct "available for sale" numbers for EU marketplaces,
+    unlike the FBA Inventory API which only returns physically local stock.
+
+    Returns:
+        List of row dicts keyed by report TSV column headers
+    """
+    return pull_inventory_report(access_token, marketplace_code, "FBA_INVENTORY", region)
+
+
+def parse_fba_inventory_report_row(row: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Parse a row from GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA into DB-compatible fields.
+
+    Report columns (key ones):
+    - sku, asin, fnsku, product-name, condition
+    - afn-fulfillable-quantity (total sellable = local + remote)
+    - afn-fulfillable-quantity-local (units in local FCs)
+    - afn-fulfillable-quantity-remote (units in remote FCs, cross-border EFN)
+    - afn-reserved-quantity
+    - afn-inbound-working-quantity
+    - afn-inbound-shipped-quantity
+    - afn-inbound-receiving-quantity
+    - afn-unsellable-quantity
+
+    Returns:
+        Dict with fields matching sp_fba_inventory columns
+    """
+    def safe_int(val):
+        """Convert string to int, handling empty/None."""
+        if val is None or val == '' or val == 'N/A':
+            return 0
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return 0
+
+    return {
+        "sku": row.get("sku", ""),
+        "asin": row.get("asin"),
+        "fnsku": row.get("fnsku"),
+        "product_name": row.get("product-name"),
+        "condition": row.get("condition"),
+
+        # Core inventory — from report (includes EFN cross-border for EU)
+        "fulfillable_quantity": safe_int(row.get("afn-fulfillable-quantity")),
+        "fulfillable_quantity_local": safe_int(row.get("afn-fulfillable-quantity-local")),
+        "fulfillable_quantity_remote": safe_int(row.get("afn-fulfillable-quantity-remote")),
+        "reserved_quantity": safe_int(row.get("afn-reserved-quantity")),
+        "inbound_working_quantity": safe_int(row.get("afn-inbound-working-quantity")),
+        "inbound_shipped_quantity": safe_int(row.get("afn-inbound-shipped-quantity")),
+        "inbound_receiving_quantity": safe_int(row.get("afn-inbound-receiving-quantity")),
+        "unsellable_quantity": safe_int(row.get("afn-unsellable-quantity")),
+    }

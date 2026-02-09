@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
 """
-Pull FBA Inventory from SP-API using the FBA Inventory API
+Pull FBA Inventory from SP-API
 
-This script pulls the current FBA inventory snapshot using the FBA Inventory API v1
-(getInventorySummaries endpoint), which is more reliable than the report-based approach.
+Uses two strategies depending on region:
+- NA: FBA Inventory API v1 (getInventorySummaries) — fast, has detailed breakdowns
+- EU/FE: GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA report — includes Pan-European
+  FBA (EFN) cross-border stock. The API only returns physically local inventory,
+  which misses remote FC stock fulfillable via European Fulfillment Network.
+
+EU report provides:
+- afn-fulfillable-quantity: Total sellable (local + remote)
+- afn-fulfillable-quantity-local: Units in same-marketplace FCs
+- afn-fulfillable-quantity-remote: Units in other EU FCs (cross-border)
 
 Features:
 - Automatic retry with exponential backoff on API failures
 - Rate limit handling via SPAPIClient
 - Slack alerts on failures (if SLACK_WEBHOOK_URL is set)
 
-Fields captured:
-- fulfillable_quantity (ready to ship)
-- reserved_quantity (pending orders/transfers)
-- inbound_working_quantity (shipments being prepared)
-- inbound_shipped_quantity (shipments in transit)
-- unsellable_quantity (damaged/defective)
-
 Usage:
     python pull_inventory.py                          # All NA marketplaces
-    python pull_inventory.py --marketplace USA        # Single marketplace
+    python pull_inventory.py --region EU              # EU marketplaces (report-based)
+    python pull_inventory.py --marketplace UAE --region EU  # Single EU marketplace
     python pull_inventory.py --dry-run               # Test without DB writes
 """
 
@@ -36,6 +38,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.auth import get_access_token
 from utils.fba_inventory_api import pull_fba_inventory, MARKETPLACE_IDS
+from utils.inventory_reports import (
+    pull_fba_inventory_report,
+    parse_fba_inventory_report_row,
+)
 from utils.db import (
     get_supabase_client,
     create_data_import,
@@ -169,21 +175,30 @@ def pull_marketplace_inventory(
     """
     Pull FBA inventory for a single marketplace.
 
+    For EU/FE regions, uses GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA report
+    which includes Pan-European FBA (EFN) cross-border stock. The FBA Inventory
+    API only returns physically local stock, which is wrong for EU marketplaces
+    like UAE where most inventory is fulfilled cross-border.
+
+    For NA region, uses the FBA Inventory API v1 (faster, includes detailed
+    breakdowns like reserved sub-types and damaged sub-types).
+
     Args:
         marketplace_code: Marketplace code (e.g., 'USA')
         region: API region
         dry_run: If True, don't write to database
         client: SPAPIClient instance (handles retry and rate limiting)
-        access_token: Access token (deprecated, use client instead)
+        access_token: Access token (used for report-based approach)
 
     Returns:
         Dict with status information
     """
     start_time = time.time()
-    report_type = "FBA_INVENTORY_API"  # Using API, not reports
+    use_report = region.upper() in ("EU", "FE")
+    report_type = "FBA_INVENTORY_REPORT" if use_report else "FBA_INVENTORY_API"
 
     print(f"\n{'='*50}")
-    print(f"Pulling FBA inventory for {marketplace_code}")
+    print(f"Pulling FBA inventory for {marketplace_code} ({'report' if use_report else 'API'})")
     print(f"{'='*50}")
 
     # Create tracking records
@@ -199,13 +214,29 @@ def pull_marketplace_inventory(
         pull_id = create_inventory_pull_record(marketplace_code, report_type, import_id)
 
     try:
-        # Pull using the FBA Inventory API (client handles retry and rate limiting)
-        rows = pull_fba_inventory(
-            access_token=access_token,
-            marketplace_code=marketplace_code,
-            region=region,
-            client=client
-        )
+        if use_report:
+            # EU/FE: Use report-based approach for correct EFN cross-border fulfillable
+            print(f"  Using GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA report (includes EFN cross-border)...")
+            raw_rows = pull_fba_inventory_report(
+                access_token=access_token,
+                marketplace_code=marketplace_code,
+                region=region
+            )
+            # Parse report rows to DB format
+            rows = []
+            for raw_row in raw_rows:
+                parsed = parse_fba_inventory_report_row(raw_row)
+                if parsed["sku"]:
+                    rows.append(parsed)
+            print(f"  Parsed {len(rows)} inventory records from report")
+        else:
+            # NA: Use FBA Inventory API (includes detailed breakdowns)
+            rows = pull_fba_inventory(
+                access_token=access_token,
+                marketplace_code=marketplace_code,
+                region=region,
+                client=client
+            )
 
         if dry_run:
             print(f"\n[DRY RUN] Would upsert {len(rows)} inventory records")
@@ -341,7 +372,8 @@ def main():
             marketplace_code=marketplace,
             region=region,
             dry_run=args.dry_run,
-            client=client
+            client=client,
+            access_token=access_token
         )
         results.append(result)
 
