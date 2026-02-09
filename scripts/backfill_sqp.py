@@ -67,8 +67,9 @@ DEFAULT_BACKFILL_START = date(2023, 12, 3)  # First Sunday in Dec 2023
 # MX excluded (Brand Analytics not available)
 MARKETPLACES_BY_REGION = {
     "NA": ["USA", "CA"],
-    "EU": ["UK", "DE", "FR", "IT", "ES", "UAE"],
-    "FE": ["AU"]
+    "EU": ["UK", "DE", "FR", "IT", "ES"],
+    "FE": ["AU"],
+    "UAE": ["UAE"]
 }
 
 # Token refresh interval (30 minutes)
@@ -138,7 +139,7 @@ def main():
         "--region",
         type=str,
         default="NA",
-        choices=["NA", "EU", "FE"],
+        choices=["NA", "EU", "FE", "UAE"],
         help="Region (default: NA)"
     )
     parser.add_argument("--dry-run", action="store_true", help="Show plan without executing")

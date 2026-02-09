@@ -60,8 +60,9 @@ NA_MARKETPLACES = ["USA", "CA", "MX"]
 
 MARKETPLACES_BY_REGION = {
     "NA": ["USA", "CA", "MX"],
-    "EU": ["UK", "DE", "FR", "IT", "ES", "UAE"],
-    "FE": ["AU"]
+    "EU": ["UK", "DE", "FR", "IT", "ES"],
+    "FE": ["AU"],
+    "UAE": ["UAE"]
 }
 
 # Marketplace timezones (same as pull_daily_sales.py)
@@ -287,7 +288,7 @@ def main():
         "--region",
         type=str,
         default="NA",
-        choices=["NA", "EU", "FE"],
+        choices=["NA", "EU", "FE", "UAE"],
         help="Region to pull. Default: NA"
     )
     parser.add_argument(

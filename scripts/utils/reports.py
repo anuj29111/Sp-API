@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 ENDPOINTS = {
     "NA": "sellingpartnerapi-na.amazon.com",
     "EU": "sellingpartnerapi-eu.amazon.com",
-    "FE": "sellingpartnerapi-fe.amazon.com"
+    "FE": "sellingpartnerapi-fe.amazon.com",
+    "UAE": "sellingpartnerapi-eu.amazon.com"   # UAE uses EU endpoint, different token
 }
 
 # Amazon Marketplace IDs
@@ -40,7 +41,7 @@ MARKETPLACE_IDS = {
     "FR": {"id": "A13V1IB3VIYZZH", "region": "EU"},
     "IT": {"id": "APJ6JRA9NG5V4", "region": "EU"},
     "ES": {"id": "A1RKKUPIHCS9HS", "region": "EU"},
-    "UAE": {"id": "A2VIGQ35RCS4UG", "region": "EU"},
+    "UAE": {"id": "A2VIGQ35RCS4UG", "region": "UAE"},
     "AU": {"id": "A39IBJ37TRP1C6", "region": "FE"},
     "JP": {"id": "A1VC38T7YXB528", "region": "FE"}
 }

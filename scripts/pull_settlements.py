@@ -335,7 +335,7 @@ def main():
         "--region",
         type=str,
         default="NA",
-        choices=["NA", "EU", "FE"],
+        choices=["NA", "EU", "FE", "UAE"],
         help="Region to pull. Default: NA"
     )
     parser.add_argument(
@@ -361,7 +361,7 @@ def main():
         since_date = get_default_since_date()
 
     # Default list marketplace per region (any marketplace in the region works)
-    DEFAULT_LIST_MARKETPLACE = {"NA": "USA", "EU": "UK", "FE": "AU"}
+    DEFAULT_LIST_MARKETPLACE = {"NA": "USA", "EU": "UK", "FE": "AU", "UAE": "UAE"}
     list_marketplace = (args.marketplace or DEFAULT_LIST_MARKETPLACE.get(region, "USA")).upper()
     if list_marketplace not in MARKETPLACE_IDS:
         print(f"Error: Invalid marketplace '{list_marketplace}'")

@@ -34,7 +34,8 @@ logger = logging.getLogger(__name__)
 ENDPOINTS = {
     "NA": "sellingpartnerapi-na.amazon.com",
     "EU": "sellingpartnerapi-eu.amazon.com",
-    "FE": "sellingpartnerapi-fe.amazon.com"
+    "FE": "sellingpartnerapi-fe.amazon.com",
+    "UAE": "sellingpartnerapi-eu.amazon.com"   # UAE uses EU endpoint, different token
 }
 
 # AWD API version

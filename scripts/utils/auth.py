@@ -13,7 +13,7 @@ LWA_TOKEN_URL = "https://api.amazon.com/auth/o2/token"
 
 # Per-region cache for access tokens
 # Each region gets its own cached token to avoid cross-region conflicts
-_token_cache = {}  # {"NA": {"access_token": ..., "expires_at": ...}, "EU": {...}, "FE": {...}}
+_token_cache = {}  # {"NA": {"access_token": ..., "expires_at": ...}, "EU": {...}, "FE": {...}, "UAE": {...}}
 
 
 def get_access_token(
@@ -32,7 +32,7 @@ def get_access_token(
         client_id: LWA Client ID (defaults to SP_LWA_CLIENT_ID env var)
         client_secret: LWA Client Secret (defaults to SP_LWA_CLIENT_SECRET env var)
         refresh_token: SP-API Refresh Token (defaults to SP_REFRESH_TOKEN_{region} env var)
-        region: API region - 'NA', 'EU', or 'FE' (default: 'NA')
+        region: API region - 'NA', 'EU', 'FE', or 'UAE' (default: 'NA')
 
     Returns:
         Valid access token string
@@ -70,7 +70,7 @@ def refresh_access_token(
         client_id: LWA Client ID (defaults to SP_LWA_CLIENT_ID env var)
         client_secret: LWA Client Secret (defaults to SP_LWA_CLIENT_SECRET env var)
         refresh_token: SP-API Refresh Token (defaults to SP_REFRESH_TOKEN_{region} env var)
-        region: API region - 'NA', 'EU', or 'FE' (default: 'NA')
+        region: API region - 'NA', 'EU', 'FE', or 'UAE' (default: 'NA')
 
     Returns:
         New access token string
@@ -134,7 +134,7 @@ def get_refresh_token_for_region(region: str) -> str:
     Get the refresh token for a specific region.
 
     Args:
-        region: One of 'NA', 'EU', 'FE'
+        region: One of 'NA', 'EU', 'FE', 'UAE'
 
     Returns:
         Refresh token for the specified region
@@ -146,11 +146,12 @@ def get_refresh_token_for_region(region: str) -> str:
     env_var_map = {
         "NA": "SP_REFRESH_TOKEN_NA",
         "EU": "SP_REFRESH_TOKEN_EU",
-        "FE": "SP_REFRESH_TOKEN_FE"
+        "FE": "SP_REFRESH_TOKEN_FE",
+        "UAE": "SP_REFRESH_TOKEN_UAE"
     }
 
     if region not in env_var_map:
-        raise ValueError(f"Invalid region: {region}. Must be one of: NA, EU, FE")
+        raise ValueError(f"Invalid region: {region}. Must be one of: NA, EU, FE, UAE")
 
     token = os.environ.get(env_var_map[region])
     if not token:

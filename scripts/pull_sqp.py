@@ -67,8 +67,9 @@ logger = logging.getLogger(__name__)
 # MX excluded (Brand Analytics not available)
 MARKETPLACES_BY_REGION = {
     "NA": ["USA", "CA"],
-    "EU": ["UK", "DE", "FR", "IT", "ES", "UAE"],
-    "FE": ["AU"]
+    "EU": ["UK", "DE", "FR", "IT", "ES"],
+    "FE": ["AU"],
+    "UAE": ["UAE"]
 }
 
 
@@ -322,7 +323,7 @@ def main():
         "--region",
         type=str,
         default="NA",
-        choices=["NA", "EU", "FE"],
+        choices=["NA", "EU", "FE", "UAE"],
         help="Region (default: NA)"
     )
     parser.add_argument("--resume", action="store_true", default=True, help="Resume interrupted pull (default: True)")

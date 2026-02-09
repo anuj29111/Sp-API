@@ -46,11 +46,11 @@ POP System (Advertising API) ─────────────────
 | Late Attribution Refresh | ✅ Refreshes last 14 days |
 | Database Tables | ✅ `sp_daily_asin_data`, `sp_api_pulls` |
 | Views | ✅ Weekly, Monthly, Rolling metrics (MATERIALIZED) |
-| Backfill | 🔄 Auto-running 4x/day (all 3 regions) |
+| Backfill | 🔄 Auto-running 4x/day (all 4 regions) |
 | NA Authorization | ✅ USA, CA, MX working |
 | EU Authorization | ✅ UK, DE, FR, IT, ES working |
 | FE Authorization | ✅ AU working |
-| UAE Authorization | ⚠️ Separate seller account — needs own refresh token |
+| UAE Authorization | ✅ Working (separate seller account, own refresh token) |
 
 **Data Available:**
 - `units_ordered`, `ordered_product_sales` - Sales metrics
@@ -74,7 +74,7 @@ POP System (Advertising API) ─────────────────
 | Component | Status | Details |
 |-----------|--------|---------|
 | **Orders Report** | ✅ Working | `GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL` |
-| **Daily Pull** | ✅ Running 6x/day | Every 4 hours UTC, all 3 regions |
+| **Daily Pull** | ✅ Running 6x/day | Every 4 hours UTC, all 4 regions |
 | **S&T Protection** | ✅ Verified | Orders don't overwrite existing S&T data |
 | **data_source column** | ✅ Applied | Tracks 'orders' vs 'sales_traffic' per row |
 
@@ -256,7 +256,7 @@ POP System (Advertising API) ─────────────────
 
 ## GitHub Workflows
 
-All workflows support `--region` arg and run **3 regions (NA, EU, FE) in parallel** using GitHub Actions matrix strategy (`fail-fast: false`).
+All workflows support `--region` arg and run **4 regions (NA, EU, FE, UAE) in parallel** using GitHub Actions matrix strategy (`fail-fast: false`).
 
 ### Daily Sales Pull (`daily-pull.yml`)
 - **Schedule**: 4x/day at 2, 8, 14, 20 UTC
@@ -356,7 +356,7 @@ gh workflow run historical-backfill.yml -f region=EU              # EU only
 | FR | Europe/Paris (CET) | EU | `SP_REFRESH_TOKEN_EU` |
 | IT | Europe/Rome (CET) | EU | `SP_REFRESH_TOKEN_EU` |
 | ES | Europe/Madrid (CET) | EU | `SP_REFRESH_TOKEN_EU` |
-| UAE | Asia/Dubai (GST) | ⚠️ Separate | Needs `SP_REFRESH_TOKEN_UAE` (different seller account) |
+| UAE | Asia/Dubai (GST) | UAE | `SP_REFRESH_TOKEN_UAE` (separate seller account) |
 | AU | Australia/Sydney (AEST) | FE | `SP_REFRESH_TOKEN_FE` |
 
 ### Authorized Regions & Marketplaces
@@ -377,7 +377,7 @@ gh workflow run historical-backfill.yml -f region=EU              # EU only
 | Italy | IT | APJ6JRA9NG5V4 |
 | Spain | ES | A1RKKUPIHCS9HS |
 
-**UAE (Separate Seller Account):**
+**UAE Region (Separate Seller Account — uses EU API endpoint, own refresh token):**
 | Country | Code | Amazon ID |
 |---------|------|-----------|
 | UAE | UAE | A2VIGQ35RCS4UG |
@@ -407,7 +407,7 @@ gh run list --workflow=financial-daily.yml --limit 5
 # View workflow logs
 gh run view <run_id> --log | tail -50
 
-# Manual triggers (all support -f region=NA/EU/FE)
+# Manual triggers (all support -f region=NA/EU/FE/UAE)
 gh workflow run daily-pull.yml -f region=EU
 gh workflow run orders-daily.yml -f marketplace=UK -f region=EU
 gh workflow run inventory-daily.yml -f report_type=inventory -f region=EU
@@ -454,22 +454,22 @@ FROM sp_sqp_pulls ORDER BY period_start DESC LIMIT 20;
 
 ## Automation Summary
 
-All systems fully automated. All workflows run for **3 regions (NA, EU, FE)** in parallel using GitHub Actions matrix strategy.
+All systems fully automated. All workflows run for **4 regions (NA, EU, FE, UAE)** in parallel using GitHub Actions matrix strategy.
 
 | System | Schedule | Regions | Status |
 |--------|----------|---------|--------|
-| **Daily Sales Pull** | 4x/day (2, 8, 14, 20 UTC) | NA, EU, FE | ✅ Running |
-| **Near-Real-Time Orders** | 6x/day (0, 4, 8, 12, 16, 20 UTC) | NA, EU, FE | ✅ Running |
-| **14-Day Attribution Refresh** | 4x/day (with daily pull) | NA, EU, FE | ✅ Running |
+| **Daily Sales Pull** | 4x/day (2, 8, 14, 20 UTC) | NA, EU, FE, UAE | ✅ Running |
+| **Near-Real-Time Orders** | 6x/day (0, 4, 8, 12, 16, 20 UTC) | NA, EU, FE, UAE | ✅ Running |
+| **14-Day Attribution Refresh** | 4x/day (with daily pull) | NA, EU, FE, UAE | ✅ Running |
 | **Materialized View Refresh** | After each daily pull (NA only) | NA | ✅ Running |
-| **FBA Inventory (API for NA, Report for EU/FE)** | 3 AM UTC daily | NA, EU, FE | ✅ Running |
+| **FBA Inventory (API for NA, Report for EU/FE/UAE)** | 3 AM UTC daily | NA, EU, FE, UAE | ✅ Running |
 | **AWD Inventory** | 3 AM UTC daily | NA only | ✅ Running |
-| **Historical Backfill** | 4x/day (0, 6, 12, 18 UTC) | NA, EU, FE | 🔄 Running |
-| **SQP/SCP Weekly Pull** | Tuesdays 4 AM UTC | NA, EU, FE | ✅ Running |
-| **SQP/SCP Backfill** | 3x/day (1, 9, 17 UTC) | NA, EU, FE | 🔄 Running |
-| **Settlement Reports** | Tuesdays 7 AM UTC | NA, EU, FE | ✅ Running |
-| **Reimbursements** | Mondays 6 AM UTC | NA, EU, FE | ⚠️ USA/CA FATAL |
-| **FBA Fee Estimates** | Daily 5 AM UTC | NA, EU, FE | ✅ Working |
+| **Historical Backfill** | 4x/day (0, 6, 12, 18 UTC) | NA, EU, FE, UAE | 🔄 Running |
+| **SQP/SCP Weekly Pull** | Tuesdays 4 AM UTC | NA, EU, FE, UAE | ✅ Running |
+| **SQP/SCP Backfill** | 3x/day (1, 9, 17 UTC) | NA, EU, FE, UAE | 🔄 Running |
+| **Settlement Reports** | Tuesdays 7 AM UTC | NA, EU, FE, UAE | ✅ Running |
+| **Reimbursements** | Mondays 6 AM UTC | NA, EU, FE, UAE | ⚠️ USA/CA FATAL |
+| **FBA Fee Estimates** | Daily 5 AM UTC | NA, EU, FE, UAE | ✅ Working |
 
 ---
 
@@ -482,7 +482,7 @@ All systems fully automated. All workflows run for **3 regions (NA, EU, FE)** in
 - **Settlement Uniqueness**: No row-level unique ID — system uses MD5 hash of 11 key fields.
 - **FBA Fee Estimates**: Only CURRENT fees, not historical. Settlements are source of truth for historical.
 - **Amazon API FATAL**: USA/CA Reimbursements and Inventory Age return FATAL. Cron retries automatically.
-- **UAE Separate Account**: UAE has a different Amazon seller account with its own refresh token. Currently using the EU token which covers UK/DE/FR/IT/ES but NOT UAE. UAE needs `SP_REFRESH_TOKEN_UAE` as a separate GitHub secret.
+- **UAE Separate Account**: UAE has a different Amazon seller account with its own refresh token (`SP_REFRESH_TOKEN_UAE`). UAE is treated as a 4th region in workflow matrices, using the EU API endpoint but its own auth credentials.
 - **EU Inventory (Pan-European FBA)**: FBA Inventory API v1 only returns physically local FC stock. For EU, we use `GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA` report instead, which includes `afn-fulfillable-quantity-local` + `afn-fulfillable-quantity-remote` columns. Chalkola uses MCI (Multi-Country Inventory) so most EU stock is local per marketplace (remote = 0).
 - **~~FBA Inventory Pagination~~** *(FIXED Feb 9, 2026)*: `nextToken` was read from wrong path. Fixed in `fba_inventory_api.py`.
 
@@ -543,13 +543,11 @@ SUPABASE DATABASE
 
 ## Pending Tasks
 
-### Immediate: UAE Separate Token Setup
-1. Add `SP_REFRESH_TOKEN_UAE` as a GitHub secret (different seller account from EU)
-2. Update `auth.py` to support UAE as a separate "region" or sub-region
-3. Update all scripts to route UAE through its own token
-4. Options: (a) Add UAE as 4th region in matrix, or (b) Keep UAE in EU region but use different token
-5. Test inventory — Excel shows 9,349 fulfillable across 71 ASINs
-6. Test sales — Feb 7 data should appear
+### ~~Immediate: UAE Separate Token Setup~~ ✅ DONE (Session 17)
+- UAE added as 4th region in all workflows and scripts
+- `SP_REFRESH_TOKEN_UAE` GitHub secret added
+- All 30 files updated (auth, utils, scripts, workflows)
+- Pending: validate inventory + sales data against Excel
 
 ### Google Sheets — Copy & Test
 1. Copy updated `supabase_sales.gs` to Apps Script editor
@@ -588,11 +586,11 @@ SUPABASE DATABASE
 | `SP_REFRESH_TOKEN_NA` | North America refresh token (USA, CA, MX) |
 | `SP_REFRESH_TOKEN_EU` | Europe refresh token (UK, DE, FR, IT, ES) |
 | `SP_REFRESH_TOKEN_FE` | Far East refresh token (AU) |
-| `SP_REFRESH_TOKEN_UAE` | ⚠️ **NEEDED** — UAE has separate seller account |
+| `SP_REFRESH_TOKEN_UAE` | UAE refresh token (separate seller account) |
 | `SUPABASE_URL` | Database URL |
 | `SUPABASE_SERVICE_KEY` | Database access |
 | `SLACK_WEBHOOK_URL` | Slack alerts for failures |
 
 ---
 
-*Last Updated: February 9, 2026 (Session 16 — Multi-region EU/FE expansion complete. All workflows running for NA/EU/FE with matrix strategy. EU/FE sales validated: UK 100%, DE 99%, AU 98% match. EU inventory switched from API to report-based approach for correct Pan-European FBA data (afn-fulfillable-quantity-local/remote columns). UK/DE/FR/IT/ES/AU inventory verified. UAE discovered to be SEPARATE seller account — needs own SP_REFRESH_TOKEN_UAE secret, to be set up in next session. SQP/SCP scripts updated for multi-region. Backfills running for all regions.)*
+*Last Updated: February 9, 2026 (Session 17 — UAE added as 4th region with separate refresh token. SP_REFRESH_TOKEN_UAE secret added. All 30 files updated: auth.py, 6 utils modules, 12 pull/backfill scripts, 11 workflow YAMLs. UAE uses EU API endpoint but own token. All workflows now run 4 regions (NA, EU, FE, UAE) in parallel. UAE inventory uses report-based approach same as EU.)*
