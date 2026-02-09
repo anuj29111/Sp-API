@@ -424,19 +424,8 @@ function getOrCreateSPDataSheet(country) {
 }
 
 // ============================================
-// REFRESH: SP DATA (Weekly/Monthly) - EXISTING + PAGINATION FIX
+// REFRESH: SP DATA (Weekly/Monthly)
 // ============================================
-
-function refreshSPDataUSA() { refreshSPData('USA', 'US'); }
-function refreshSPDataCA() { refreshSPData('CA', 'CA'); }
-function refreshSPDataMX() { refreshSPData('MX', 'MX'); }
-function refreshSPDataUK() { refreshSPData('UK', 'UK'); }
-function refreshSPDataDE() { refreshSPData('DE', 'DE'); }
-function refreshSPDataFR() { refreshSPData('FR', 'FR'); }
-function refreshSPDataIT() { refreshSPData('IT', 'IT'); }
-function refreshSPDataES() { refreshSPData('ES', 'ES'); }
-function refreshSPDataAU() { refreshSPData('AU', 'AU'); }
-function refreshSPDataUAE() { refreshSPData('UAE', 'UAE'); }
 
 function refreshSPData(country, configKey) {
   try {
@@ -444,8 +433,7 @@ function refreshSPData(country, configKey) {
     var marketplaceId = config.marketplaces[configKey];
 
     if (!marketplaceId) {
-      SpreadsheetApp.getUi().alert(country + ' marketplace ID not found in Script Config!');
-      return;
+      throw new Error(country + ' marketplace ID not found in Script Config!');
     }
 
     SpreadsheetApp.getActiveSpreadsheet().toast('Fetching ' + country + ' sales data (with pagination)...', 'Please wait', 120);
@@ -495,18 +483,11 @@ function refreshSPData(country, configKey) {
       sheet.getRange(2, 1, output.length, 11).setValues(output);
     }
 
-    var summary = 'SP Data ' + country + ' refreshed!\n\n' +
-      'Monthly rows: ' + monthlyData.length + '\n' +
-      'Weekly rows: ' + weeklyData.length + '\n' +
-      'Total rows: ' + output.length;
-
-    Logger.log(summary);
-    SpreadsheetApp.getUi().alert(summary);
+    Logger.log('SP Data ' + country + ': ' + monthlyData.length + ' monthly + ' + weeklyData.length + ' weekly = ' + output.length + ' total');
 
   } catch (e) {
-    Logger.log('Error: ' + e.message);
-    Logger.log(e.stack);
-    SpreadsheetApp.getUi().alert('Error refreshing SP Data ' + country + ': ' + e.message);
+    Logger.log('Error refreshing SP Data ' + country + ': ' + e.message + '\n' + e.stack);
+    throw e; // re-throw so refreshEverything() can catch and report
   }
 }
 
@@ -514,25 +495,13 @@ function refreshSPData(country, configKey) {
 // REFRESH: SP ROLLING (7/14/30/60-day metrics)
 // ============================================
 
-function refreshRollingUSA() { refreshRollingData('USA', 'US'); }
-function refreshRollingCA() { refreshRollingData('CA', 'CA'); }
-function refreshRollingMX() { refreshRollingData('MX', 'MX'); }
-function refreshRollingUK() { refreshRollingData('UK', 'UK'); }
-function refreshRollingDE() { refreshRollingData('DE', 'DE'); }
-function refreshRollingFR() { refreshRollingData('FR', 'FR'); }
-function refreshRollingIT() { refreshRollingData('IT', 'IT'); }
-function refreshRollingES() { refreshRollingData('ES', 'ES'); }
-function refreshRollingAU() { refreshRollingData('AU', 'AU'); }
-function refreshRollingUAE() { refreshRollingData('UAE', 'UAE'); }
-
 function refreshRollingData(country, configKey) {
   try {
     var config = getSupabaseConfig();
     var marketplaceId = config.marketplaces[configKey];
 
     if (!marketplaceId) {
-      SpreadsheetApp.getUi().alert(country + ' marketplace ID not found in Script Config!');
-      return;
+      throw new Error(country + ' marketplace ID not found in Script Config!');
     }
 
     SpreadsheetApp.getActiveSpreadsheet().toast('Fetching ' + country + ' rolling metrics...', 'Please wait', 30);
@@ -578,11 +547,11 @@ function refreshRollingData(country, configKey) {
       sheet.getRange(2, 1, output.length, headers.length).setValues(output);
     }
 
-    SpreadsheetApp.getUi().alert('SP Rolling ' + country + ' refreshed!\n\nRows: ' + output.length);
+    Logger.log('SP Rolling ' + country + ': ' + output.length + ' rows');
 
   } catch (e) {
-    Logger.log('Error: ' + e.message + '\n' + e.stack);
-    SpreadsheetApp.getUi().alert('Error refreshing SP Rolling ' + country + ': ' + e.message);
+    Logger.log('Error refreshing SP Rolling ' + country + ': ' + e.message + '\n' + e.stack);
+    throw e;
   }
 }
 
@@ -590,25 +559,13 @@ function refreshRollingData(country, configKey) {
 // REFRESH: SP INVENTORY (FBA + AWD)
 // ============================================
 
-function refreshInventoryUSA() { refreshInventoryData('USA', 'US'); }
-function refreshInventoryCA() { refreshInventoryData('CA', 'CA'); }
-function refreshInventoryMX() { refreshInventoryData('MX', 'MX'); }
-function refreshInventoryUK() { refreshInventoryData('UK', 'UK'); }
-function refreshInventoryDE() { refreshInventoryData('DE', 'DE'); }
-function refreshInventoryFR() { refreshInventoryData('FR', 'FR'); }
-function refreshInventoryIT() { refreshInventoryData('IT', 'IT'); }
-function refreshInventoryES() { refreshInventoryData('ES', 'ES'); }
-function refreshInventoryAU() { refreshInventoryData('AU', 'AU'); }
-function refreshInventoryUAE() { refreshInventoryData('UAE', 'UAE'); }
-
 function refreshInventoryData(country, configKey) {
   try {
     var config = getSupabaseConfig();
     var marketplaceId = config.marketplaces[configKey];
 
     if (!marketplaceId) {
-      SpreadsheetApp.getUi().alert(country + ' marketplace ID not found in Script Config!');
-      return;
+      throw new Error(country + ' marketplace ID not found in Script Config!');
     }
 
     SpreadsheetApp.getActiveSpreadsheet().toast('Fetching ' + country + ' inventory...', 'Please wait', 30);
@@ -706,16 +663,11 @@ function refreshInventoryData(country, configKey) {
       sheet.getRange(2, 1, output.length, headers.length).setValues(output);
     }
 
-    SpreadsheetApp.getUi().alert('SP Inventory ' + country + ' refreshed!\n\n' +
-      'FBA SKUs: ' + fbaData.length + '\n' +
-      'AWD SKUs: ' + awdData.length + '\n' +
-      'AWD matched to FBA: ' + Object.keys(matchedAWDSKUs).length + '\n' +
-      'AWD-only (unmatched): ' + unmatchedCount + '\n' +
-      'Total rows: ' + output.length);
+    Logger.log('SP Inventory ' + country + ': FBA=' + fbaData.length + ' AWD=' + awdData.length + ' total=' + output.length);
 
   } catch (e) {
-    Logger.log('Error: ' + e.message + '\n' + e.stack);
-    SpreadsheetApp.getUi().alert('Error refreshing SP Inventory ' + country + ': ' + e.message);
+    Logger.log('Error refreshing SP Inventory ' + country + ': ' + e.message + '\n' + e.stack);
+    throw e;
   }
 }
 
@@ -723,25 +675,13 @@ function refreshInventoryData(country, configKey) {
 // REFRESH: SP FEES (Estimates + Settlement + Storage)
 // ============================================
 
-function refreshFeesUSA() { refreshFeesData('USA', 'US'); }
-function refreshFeesCA() { refreshFeesData('CA', 'CA'); }
-function refreshFeesMX() { refreshFeesData('MX', 'MX'); }
-function refreshFeesUK() { refreshFeesData('UK', 'UK'); }
-function refreshFeesDE() { refreshFeesData('DE', 'DE'); }
-function refreshFeesFR() { refreshFeesData('FR', 'FR'); }
-function refreshFeesIT() { refreshFeesData('IT', 'IT'); }
-function refreshFeesES() { refreshFeesData('ES', 'ES'); }
-function refreshFeesAU() { refreshFeesData('AU', 'AU'); }
-function refreshFeesUAE() { refreshFeesData('UAE', 'UAE'); }
-
 function refreshFeesData(country, configKey) {
   try {
     var config = getSupabaseConfig();
     var marketplaceId = config.marketplaces[configKey];
 
     if (!marketplaceId) {
-      SpreadsheetApp.getUi().alert(country + ' marketplace ID not found in Script Config!');
-      return;
+      throw new Error(country + ' marketplace ID not found in Script Config!');
     }
 
     SpreadsheetApp.getActiveSpreadsheet().toast('Fetching ' + country + ' fee data...', 'Please wait', 30);
@@ -820,152 +760,105 @@ function refreshFeesData(country, configKey) {
       sheet.getRange(2, 1, output.length, headers.length).setValues(output);
     }
 
-    SpreadsheetApp.getUi().alert('SP Fees ' + country + ' refreshed!\n\n' +
-      'Fee estimates: ' + feeEstimates.length + '\n' +
-      'Settlement fee SKUs: ' + settleFees.length + '\n' +
-      'Storage fee ASINs: ' + storageFees.length + '\n' +
-      'Total rows: ' + output.length);
+    Logger.log('SP Fees ' + country + ': estimates=' + feeEstimates.length + ' settlements=' + settleFees.length + ' storage=' + storageFees.length);
 
   } catch (e) {
-    Logger.log('Error: ' + e.message + '\n' + e.stack);
-    SpreadsheetApp.getUi().alert('Error refreshing SP Fees ' + country + ': ' + e.message);
+    Logger.log('Error refreshing SP Fees ' + country + ': ' + e.message + '\n' + e.stack);
+    throw e;
   }
 }
 
 // ============================================
-// REFRESH ALL - Batch refresh for a marketplace
+// MASTER REFRESH — All Marketplaces, All Data
 // ============================================
+// Reads ALL marketplaces from Script Config and refreshes everything.
+// This is the ONLY function you need. Also works with time-based triggers.
+//
+// Data types pulled per marketplace:
+//   1. SP Data (weekly/monthly sales + traffic)
+//   2. SP Rolling (7/14/30/60 day metrics)
+//   3. SP Inventory (FBA + AWD)
+//   4. SP Fees (estimates + settlement + storage)
 
-function refreshAllUSA() { refreshAll('USA', 'US'); }
-function refreshAllCA() { refreshAll('CA', 'CA'); }
-function refreshAllMX() { refreshAll('MX', 'MX'); }
-function refreshAllUK() { refreshAll('UK', 'UK'); }
-function refreshAllDE() { refreshAll('DE', 'DE'); }
-function refreshAllFR() { refreshAll('FR', 'FR'); }
-function refreshAllIT() { refreshAll('IT', 'IT'); }
-function refreshAllES() { refreshAll('ES', 'ES'); }
-function refreshAllAU() { refreshAll('AU', 'AU'); }
-function refreshAllUAE() { refreshAll('UAE', 'UAE'); }
+/**
+ * Refreshes ALL data for ALL configured marketplaces.
+ * Safe to call from a time-based trigger (no UI alerts in trigger mode).
+ */
+function refreshEverything() {
+  var config = getSupabaseConfig();
+  var keys = Object.keys(config.marketplaces);
 
-function refreshAll(country, configKey) {
+  if (keys.length === 0) {
+    _safeAlert('No marketplaces found in Script Config!');
+    return;
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var results = [];
+  var errors = [];
+
+  ss.toast('Refreshing ALL data for ' + keys.length + ' marketplaces...', 'Please wait', 600);
+
+  for (var i = 0; i < keys.length; i++) {
+    var configKey = keys[i];
+    var country = configKey; // config key IS the country label (US, CA, UK, etc.)
+
+    ss.toast('(' + (i + 1) + '/' + keys.length + ') Refreshing ' + country + '...', 'Progress', 120);
+
+    try {
+      refreshSPData(country, configKey);
+      refreshRollingData(country, configKey);
+      refreshInventoryData(country, configKey);
+      refreshFeesData(country, configKey);
+      results.push(country + ' ✓');
+    } catch (e) {
+      Logger.log('Error refreshing ' + country + ': ' + e.message);
+      errors.push(country + ': ' + e.message);
+      results.push(country + ' ✗');
+    }
+  }
+
+  var summary = 'Refresh complete!\n\n' + results.join('\n');
+  if (errors.length > 0) {
+    summary += '\n\nErrors:\n' + errors.join('\n');
+  }
+  Logger.log(summary);
+  _safeAlert(summary);
+}
+
+/**
+ * Shows alert if running interactively, logs if running from trigger.
+ */
+function _safeAlert(message) {
   try {
-    SpreadsheetApp.getActiveSpreadsheet().toast('Refreshing ALL ' + country + ' data...', 'Please wait', 300);
-
-    refreshSPData(country, configKey);
-    refreshRollingData(country, configKey);
-    refreshInventoryData(country, configKey);
-    refreshFeesData(country, configKey);
-
-    SpreadsheetApp.getUi().alert('All ' + country + ' data refreshed successfully!');
+    SpreadsheetApp.getUi().alert(message);
   } catch (e) {
-    Logger.log('Error in refreshAll: ' + e.message);
-    SpreadsheetApp.getUi().alert('Error during refresh ALL ' + country + ': ' + e.message);
+    // Running from trigger — no UI available, just log
+    Logger.log(message);
   }
 }
 
 // ============================================
-// MENU
+// MENU (clean)
 // ============================================
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('Supabase Data')
-    .addItem('Test Connection', 'testConnection')
+    .addItem('⟳ Refresh Everything (All Marketplaces)', 'refreshEverything')
     .addSeparator()
     .addSubMenu(ui.createMenu('Daily Sheets')
       .addItem('Refresh Current Sheet', 'refreshCurrentDailySheet')
       .addItem('Refresh TESTING Sheet', 'refreshTestingSheet'))
     .addSeparator()
-    .addSubMenu(ui.createMenu('Sales (Weekly/Monthly)')
-      .addItem('--- NA ---', 'noOp')
-      .addItem('Refresh SP Data USA', 'refreshSPDataUSA')
-      .addItem('Refresh SP Data CA', 'refreshSPDataCA')
-      .addItem('Refresh SP Data MX', 'refreshSPDataMX')
-      .addItem('--- EU ---', 'noOp')
-      .addItem('Refresh SP Data UK', 'refreshSPDataUK')
-      .addItem('Refresh SP Data DE', 'refreshSPDataDE')
-      .addItem('Refresh SP Data FR', 'refreshSPDataFR')
-      .addItem('Refresh SP Data IT', 'refreshSPDataIT')
-      .addItem('Refresh SP Data ES', 'refreshSPDataES')
-      .addItem('--- FE ---', 'noOp')
-      .addItem('Refresh SP Data AU', 'refreshSPDataAU')
-      .addItem('--- UAE ---', 'noOp')
-      .addItem('Refresh SP Data UAE', 'refreshSPDataUAE'))
-    .addSeparator()
-    .addSubMenu(ui.createMenu('Rolling Averages')
-      .addItem('--- NA ---', 'noOp')
-      .addItem('Refresh SP Rolling USA', 'refreshRollingUSA')
-      .addItem('Refresh SP Rolling CA', 'refreshRollingCA')
-      .addItem('Refresh SP Rolling MX', 'refreshRollingMX')
-      .addItem('--- EU ---', 'noOp')
-      .addItem('Refresh SP Rolling UK', 'refreshRollingUK')
-      .addItem('Refresh SP Rolling DE', 'refreshRollingDE')
-      .addItem('Refresh SP Rolling FR', 'refreshRollingFR')
-      .addItem('Refresh SP Rolling IT', 'refreshRollingIT')
-      .addItem('Refresh SP Rolling ES', 'refreshRollingES')
-      .addItem('--- FE ---', 'noOp')
-      .addItem('Refresh SP Rolling AU', 'refreshRollingAU')
-      .addItem('--- UAE ---', 'noOp')
-      .addItem('Refresh SP Rolling UAE', 'refreshRollingUAE'))
-    .addSeparator()
-    .addSubMenu(ui.createMenu('Inventory')
-      .addItem('--- NA ---', 'noOp')
-      .addItem('Refresh SP Inventory USA', 'refreshInventoryUSA')
-      .addItem('Refresh SP Inventory CA', 'refreshInventoryCA')
-      .addItem('Refresh SP Inventory MX', 'refreshInventoryMX')
-      .addItem('--- EU ---', 'noOp')
-      .addItem('Refresh SP Inventory UK', 'refreshInventoryUK')
-      .addItem('Refresh SP Inventory DE', 'refreshInventoryDE')
-      .addItem('Refresh SP Inventory FR', 'refreshInventoryFR')
-      .addItem('Refresh SP Inventory IT', 'refreshInventoryIT')
-      .addItem('Refresh SP Inventory ES', 'refreshInventoryES')
-      .addItem('--- FE ---', 'noOp')
-      .addItem('Refresh SP Inventory AU', 'refreshInventoryAU')
-      .addItem('--- UAE ---', 'noOp')
-      .addItem('Refresh SP Inventory UAE', 'refreshInventoryUAE'))
-    .addSeparator()
-    .addSubMenu(ui.createMenu('Fees & Costs')
-      .addItem('--- NA ---', 'noOp')
-      .addItem('Refresh SP Fees USA', 'refreshFeesUSA')
-      .addItem('Refresh SP Fees CA', 'refreshFeesCA')
-      .addItem('Refresh SP Fees MX', 'refreshFeesMX')
-      .addItem('--- EU ---', 'noOp')
-      .addItem('Refresh SP Fees UK', 'refreshFeesUK')
-      .addItem('Refresh SP Fees DE', 'refreshFeesDE')
-      .addItem('Refresh SP Fees FR', 'refreshFeesFR')
-      .addItem('Refresh SP Fees IT', 'refreshFeesIT')
-      .addItem('Refresh SP Fees ES', 'refreshFeesES')
-      .addItem('--- FE ---', 'noOp')
-      .addItem('Refresh SP Fees AU', 'refreshFeesAU')
-      .addItem('--- UAE ---', 'noOp')
-      .addItem('Refresh SP Fees UAE', 'refreshFeesUAE'))
-    .addSeparator()
-    .addSubMenu(ui.createMenu('Refresh ALL')
-      .addItem('--- NA ---', 'noOp')
-      .addItem('Refresh ALL USA', 'refreshAllUSA')
-      .addItem('Refresh ALL CA', 'refreshAllCA')
-      .addItem('Refresh ALL MX', 'refreshAllMX')
-      .addItem('--- EU ---', 'noOp')
-      .addItem('Refresh ALL UK', 'refreshAllUK')
-      .addItem('Refresh ALL DE', 'refreshAllDE')
-      .addItem('Refresh ALL FR', 'refreshAllFR')
-      .addItem('Refresh ALL IT', 'refreshAllIT')
-      .addItem('Refresh ALL ES', 'refreshAllES')
-      .addItem('--- FE ---', 'noOp')
-      .addItem('Refresh ALL AU', 'refreshAllAU')
-      .addItem('--- UAE ---', 'noOp')
-      .addItem('Refresh ALL UAE', 'refreshAllUAE'))
-    .addSeparator()
     .addSubMenu(ui.createMenu('Debug')
+      .addItem('Test Connection', 'testConnection')
       .addItem('Check Sheet Dates', 'debugTestingSheetDates')
       .addItem('Check Sheet ASINs', 'debugTestingSheetASINs'))
     .addSeparator()
     .addItem('Show Formula Examples', 'showFormulaExamples')
     .addToUi();
 }
-
-/** No-op function used as menu separator labels */
-function noOp() {}
 
 function testConnection() {
   try {
