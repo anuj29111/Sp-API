@@ -7,9 +7,18 @@ on:
   workflow_dispatch:
     inputs:
       marketplace:
-        description: 'Marketplace (leave empty for all NA)'
+        description: 'Marketplace (leave empty for all in region)'
         required: false
         type: string
+      region:
+        description: 'Region to pull (NA, EU, FE). Leave empty for all regions'
+        required: false
+        type: choice
+        options:
+          - ''
+          - 'NA'
+          - 'EU'
+          - 'FE'
       report_type:
         description: 'Report type to pull'
         required: false
@@ -35,6 +44,10 @@ jobs:
   pull-inventory:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        region: ${{ github.event.inputs.region != '' && fromJSON(format('["{0}"]', github.event.inputs.region)) || fromJSON('["NA", "EU", "FE"]') }}
 
     steps:
       - name: Checkout repository
@@ -49,17 +62,19 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Pull FBA Inventory
+      - name: Pull FBA Inventory (${{ matrix.region }})
         if: ${{ github.event.inputs.report_type == 'all' || github.event.inputs.report_type == 'inventory' || github.event_name == 'schedule' }}
         env:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
           SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SP_REFRESH_TOKEN_EU: ${{ secrets.SP_REFRESH_TOKEN_EU }}
+          SP_REFRESH_TOKEN_FE: ${{ secrets.SP_REFRESH_TOKEN_FE }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           cd scripts
-          ARGS=""
+          ARGS="--region ${{ matrix.region }}"
           if [ -n "${{ github.event.inputs.marketplace }}" ]; then
             ARGS="$ARGS --marketplace ${{ github.event.inputs.marketplace }}"
           fi
@@ -68,12 +83,13 @@ jobs:
           fi
           python pull_inventory.py $ARGS
 
+      # AWD is US-only — only run for NA region
       - name: Wait before AWD
-        if: ${{ github.event.inputs.report_type == 'all' || github.event_name == 'schedule' }}
+        if: ${{ matrix.region == 'NA' && (github.event.inputs.report_type == 'all' || github.event_name == 'schedule') }}
         run: sleep 10
 
       - name: Pull AWD Inventory
-        if: ${{ github.event.inputs.report_type == 'all' || github.event.inputs.report_type == 'awd' || github.event_name == 'schedule' }}
+        if: ${{ matrix.region == 'NA' && (github.event.inputs.report_type == 'all' || github.event.inputs.report_type == 'awd' || github.event_name == 'schedule') }}
         env:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
@@ -88,12 +104,13 @@ jobs:
           fi
           python pull_awd_inventory.py $ARGS
 
+      # Inventory Age is NA-only for now
       - name: Wait before Inventory Age
-        if: ${{ github.event.inputs.report_type == 'all' || github.event_name == 'schedule' }}
+        if: ${{ matrix.region == 'NA' && (github.event.inputs.report_type == 'all' || github.event_name == 'schedule') }}
         run: sleep 120
 
       - name: Pull Inventory Age
-        if: ${{ github.event.inputs.report_type == 'all' || github.event.inputs.report_type == 'age' || github.event_name == 'schedule' }}
+        if: ${{ matrix.region == 'NA' && (github.event.inputs.report_type == 'all' || github.event.inputs.report_type == 'age' || github.event_name == 'schedule') }}
         continue-on-error: true
         env:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
@@ -115,9 +132,9 @@ jobs:
           fi
           python pull_inventory_age.py $ARGS
 
-      # Step 4: Capture monthly inventory snapshot (on 1st-2nd of month)
+      # Monthly inventory snapshot — NA only
       - name: Capture monthly inventory snapshot
-        if: ${{ github.event_name == 'schedule' }}
+        if: ${{ matrix.region == 'NA' && github.event_name == 'schedule' }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}

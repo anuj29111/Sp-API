@@ -73,7 +73,7 @@ NA_MARKETPLACES = ["USA", "CA", "MX"]
 MARKETPLACES_BY_REGION = {
     "NA": ["USA", "CA", "MX"],
     "EU": ["UK", "DE", "FR", "IT", "ES", "UAE"],
-    "FE": ["AU", "JP"]
+    "FE": ["AU"]
 }
 
 # Marketplace timezones for calculating "today" in each marketplace
@@ -303,9 +303,9 @@ def pull_region_data(
     """
     pull_start_time = time.time()
 
-    # Get access token once for all marketplaces
+    # Get access token once for all marketplaces (region-aware)
     print("🔑 Getting access token...")
-    access_token = get_access_token()
+    access_token = get_access_token(region=region)
 
     # Create SPAPIClient with retry and rate limiting
     client = SPAPIClient(access_token, region=region)
@@ -450,7 +450,7 @@ def main():
         print(f"📍 {mp_code}: pulling date {report_date}")
 
         print("🔑 Getting access token...")
-        access_token = get_access_token()
+        access_token = get_access_token(region=args.region)
         client = SPAPIClient(access_token, region=args.region)
 
         results = [pull_marketplace_data(

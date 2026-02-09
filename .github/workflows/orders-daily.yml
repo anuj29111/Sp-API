@@ -13,8 +13,17 @@ on:
         description: 'Date to pull (YYYY-MM-DD). Default: today + yesterday'
         required: false
       marketplace:
-        description: 'Specific marketplace (e.g., USA). Leave empty for all NA'
+        description: 'Specific marketplace (e.g., USA, UK, AU). Leave empty for all in region'
         required: false
+      region:
+        description: 'Region to pull (NA, EU, FE). Leave empty for all regions'
+        required: false
+        type: choice
+        options:
+          - ''
+          - 'NA'
+          - 'EU'
+          - 'FE'
       today_only:
         description: 'Only pull today (skip yesterday catch-up)'
         type: boolean
@@ -28,6 +37,10 @@ jobs:
   pull-orders:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        region: ${{ github.event.inputs.region != '' && fromJSON(format('["{0}"]', github.event.inputs.region)) || fromJSON('["NA", "EU", "FE"]') }}
 
     steps:
       - name: Checkout repository
@@ -42,15 +55,17 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Pull orders data
+      - name: Pull orders data (${{ matrix.region }})
         env:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
           SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SP_REFRESH_TOKEN_EU: ${{ secrets.SP_REFRESH_TOKEN_EU }}
+          SP_REFRESH_TOKEN_FE: ${{ secrets.SP_REFRESH_TOKEN_FE }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
-          CMD="python scripts/pull_orders_daily.py"
+          CMD="python scripts/pull_orders_daily.py --region ${{ matrix.region }}"
 
           if [ -n "${{ github.event.inputs.date }}" ]; then
             CMD="$CMD --date ${{ github.event.inputs.date }}"
@@ -74,9 +89,10 @@ jobs:
       - name: Post summary
         if: always()
         run: |
-          echo "## Near-Real-Time Orders Pull Results" >> $GITHUB_STEP_SUMMARY
+          echo "## Near-Real-Time Orders Pull Results (${{ matrix.region }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ matrix.region }}" >> $GITHUB_STEP_SUMMARY
           echo "**Date:** ${{ github.event.inputs.date || 'Today + yesterday (per marketplace TZ)' }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Marketplace:** ${{ github.event.inputs.marketplace || 'All NA (USA, CA, MX)' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Marketplace:** ${{ github.event.inputs.marketplace || format('All {0}', matrix.region) }}" >> $GITHUB_STEP_SUMMARY
           echo "**Dry Run:** ${{ github.event.inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY

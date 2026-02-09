@@ -20,8 +20,17 @@ on:
           - 'full'      # Full 2 years
         default: 'full'
       marketplace:
-        description: 'Specific marketplace (e.g., USA). Leave empty for all NA'
+        description: 'Specific marketplace (e.g., USA, UK, AU). Leave empty for all in region'
         required: false
+      region:
+        description: 'Region to pull (NA, EU, FE). Leave empty for all regions'
+        required: false
+        type: choice
+        options:
+          - ''
+          - 'NA'
+          - 'EU'
+          - 'FE'
       force:
         description: 'Force re-pull existing data'
         type: boolean
@@ -31,6 +40,10 @@ jobs:
   check-and-backfill:
     runs-on: ubuntu-latest
     timeout-minutes: 330  # 5.5 hours (leave buffer before GitHub's 6hr limit)
+    strategy:
+      fail-fast: false
+      matrix:
+        region: ${{ github.event.inputs.region != '' && fromJSON(format('["{0}"]', github.event.inputs.region)) || fromJSON('["NA", "EU", "FE"]') }}
 
     steps:
       - name: Checkout repository
@@ -45,12 +58,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Check backfill status and run if needed
+      - name: Check backfill status and run if needed (${{ matrix.region }})
         id: backfill
         env:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
           SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SP_REFRESH_TOKEN_EU: ${{ secrets.SP_REFRESH_TOKEN_EU }}
+          SP_REFRESH_TOKEN_FE: ${{ secrets.SP_REFRESH_TOKEN_FE }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
@@ -80,12 +95,14 @@ jobs:
           esac
 
           echo "Mode: $MODE"
+          echo "Region: ${{ matrix.region }}"
           echo "Date range: $START_DATE to $END_DATE"
 
           # Build command
           CMD="python scripts/backfill_historical.py"
           CMD="$CMD --start-date $START_DATE"
           CMD="$CMD --end-date $END_DATE"
+          CMD="$CMD --region ${{ matrix.region }}"
 
           if [ -n "${{ github.event.inputs.marketplace }}" ]; then
             CMD="$CMD --marketplace ${{ github.event.inputs.marketplace }}"
@@ -106,12 +123,12 @@ jobs:
       - name: Post summary
         if: always()
         run: |
-          echo "## Historical Backfill Results" >> $GITHUB_STEP_SUMMARY
+          echo "## Historical Backfill Results (${{ matrix.region }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ matrix.region }}" >> $GITHUB_STEP_SUMMARY
           echo "**Mode:** ${{ github.event.inputs.mode || 'full (scheduled)' }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Marketplace:** ${{ github.event.inputs.marketplace || 'All NA (USA, CA, MX)' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Marketplace:** ${{ github.event.inputs.marketplace || format('All {0}', matrix.region) }}" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "The backfill automatically skips existing data and continues where it left off." >> $GITHUB_STEP_SUMMARY
-          echo "It runs daily at 6 AM UTC until all 2 years of data are pulled." >> $GITHUB_STEP_SUMMARY

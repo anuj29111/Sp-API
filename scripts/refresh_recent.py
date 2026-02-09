@@ -41,6 +41,12 @@ RATE_LIMIT_SECONDS = 65    # Wait between report requests
 # North America marketplaces
 NA_MARKETPLACES = ["USA", "CA", "MX"]
 
+MARKETPLACES_BY_REGION = {
+    "NA": ["USA", "CA", "MX"],
+    "EU": ["UK", "DE", "FR", "IT", "ES", "UAE"],
+    "FE": ["AU"]
+}
+
 
 def refresh_single_day(
     marketplace_code: str,
@@ -64,7 +70,7 @@ def refresh_single_day(
     try:
         # Get fresh access token if not provided
         if not access_token:
-            access_token = get_access_token()
+            access_token = get_access_token(region=region)
 
         # Create tracking records
         import_id = create_data_import(marketplace_code, report_date)
@@ -152,7 +158,7 @@ def refresh_recent_data(
 
     # Get access token
     print("\n🔑 Getting access token...")
-    access_token = get_access_token()
+    access_token = get_access_token(region=region)
     token_time = time.time()
 
     # Statistics
@@ -178,7 +184,7 @@ def refresh_recent_data(
             # Refresh token every 30 minutes
             if time.time() - token_time > 1800:
                 print("🔑 Refreshing access token...")
-                access_token = get_access_token()
+                access_token = get_access_token(region=region)
                 token_time = time.time()
 
             # Pull data (force overwrite)
@@ -245,17 +251,19 @@ def main():
 
     args = parser.parse_args()
 
+    region = args.region.upper()
+
     # Determine marketplaces
     if args.marketplace:
         marketplaces = [args.marketplace.upper()]
     else:
-        marketplaces = NA_MARKETPLACES
+        marketplaces = MARKETPLACES_BY_REGION.get(region, NA_MARKETPLACES)
 
     # Run refresh
     stats = refresh_recent_data(
         marketplaces=marketplaces,
         days=args.days,
-        region=args.region
+        region=region
     )
 
     # Exit with error code only if majority of requests failed

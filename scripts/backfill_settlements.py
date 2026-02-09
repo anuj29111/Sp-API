@@ -304,40 +304,50 @@ def main():
              "Note: All NA settlements are returned regardless of marketplace."
     )
     parser.add_argument(
+        "--region",
+        type=str,
+        default="NA",
+        choices=["NA", "EU", "FE"],
+        help="Region to pull (NA, EU, FE). Default: NA"
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Download and parse but don't write to database"
     )
 
     args = parser.parse_args()
+    region = args.region.upper()
 
     since_date = f"{args.since}T00:00:00Z"
 
-    # Marketplace for listing (any NA marketplace returns all NA settlements)
-    list_marketplace = (args.marketplace or "USA").upper()
+    # Marketplace for listing — settlements are per-region, any marketplace in the region works
+    DEFAULT_LIST_MARKETPLACE = {"NA": "USA", "EU": "UK", "FE": "AU"}
+    list_marketplace = (args.marketplace or DEFAULT_LIST_MARKETPLACE.get(region, "USA")).upper()
     if list_marketplace not in MARKETPLACE_IDS:
         print(f"Error: Invalid marketplace '{list_marketplace}'")
         sys.exit(1)
 
     print("=" * 60)
     print("SETTLEMENT REPORT BACKFILL")
+    print(f"Region: {region}")
     print(f"Since: {args.since}")
-    print(f"List marketplace: {list_marketplace} (all NA settlements returned)")
+    print(f"List marketplace: {list_marketplace} (all {region} settlements returned)")
     print(f"Dry run: {args.dry_run}")
     print("=" * 60)
 
     # Get access token
     print("\nGetting access token...")
-    access_token = get_access_token()
+    access_token = get_access_token(region=region)
     print("✓ Access token obtained")
 
     script_start = time.time()
 
-    # Process all settlement reports (single run for entire NA region)
+    # Process all settlement reports (single run for entire region)
     result = backfill_settlements(
         access_token,
         since_date,
-        region="NA",
+        region=region,
         dry_run=args.dry_run,
         start_time=script_start,
         list_marketplace=list_marketplace

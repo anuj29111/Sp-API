@@ -11,27 +11,28 @@ from datetime import datetime, timedelta
 # LWA Token endpoint
 LWA_TOKEN_URL = "https://api.amazon.com/auth/o2/token"
 
-# Cache for access token
-_token_cache = {
-    "access_token": None,
-    "expires_at": None
-}
+# Per-region cache for access tokens
+# Each region gets its own cached token to avoid cross-region conflicts
+_token_cache = {}  # {"NA": {"access_token": ..., "expires_at": ...}, "EU": {...}, "FE": {...}}
 
 
 def get_access_token(
     client_id: Optional[str] = None,
     client_secret: Optional[str] = None,
-    refresh_token: Optional[str] = None
+    refresh_token: Optional[str] = None,
+    region: str = "NA"
 ) -> str:
     """
     Get a valid access token, refreshing if necessary.
 
     Uses cached token if still valid, otherwise refreshes.
+    Tokens are cached per-region to support concurrent NA/EU/FE usage.
 
     Args:
         client_id: LWA Client ID (defaults to SP_LWA_CLIENT_ID env var)
         client_secret: LWA Client Secret (defaults to SP_LWA_CLIENT_SECRET env var)
-        refresh_token: SP-API Refresh Token (defaults to SP_REFRESH_TOKEN_NA env var)
+        refresh_token: SP-API Refresh Token (defaults to SP_REFRESH_TOKEN_{region} env var)
+        region: API region - 'NA', 'EU', or 'FE' (default: 'NA')
 
     Returns:
         Valid access token string
@@ -40,19 +41,27 @@ def get_access_token(
         ValueError: If credentials are missing
         requests.HTTPError: If token refresh fails
     """
-    # Check if we have a valid cached token
-    if _token_cache["access_token"] and _token_cache["expires_at"]:
-        if datetime.now() < _token_cache["expires_at"] - timedelta(minutes=5):
-            return _token_cache["access_token"]
+    region = region.upper()
 
-    # Need to refresh
-    return refresh_access_token(client_id, client_secret, refresh_token)
+    # Check if we have a valid cached token for this region
+    if region in _token_cache:
+        cache = _token_cache[region]
+        if cache.get("access_token") and cache.get("expires_at"):
+            if datetime.now() < cache["expires_at"] - timedelta(minutes=5):
+                return cache["access_token"]
+
+    # Need to refresh — use region-specific refresh token if not explicitly provided
+    if not refresh_token:
+        refresh_token = get_refresh_token_for_region(region)
+
+    return refresh_access_token(client_id, client_secret, refresh_token, region)
 
 
 def refresh_access_token(
     client_id: Optional[str] = None,
     client_secret: Optional[str] = None,
-    refresh_token: Optional[str] = None
+    refresh_token: Optional[str] = None,
+    region: str = "NA"
 ) -> str:
     """
     Refresh the access token using LWA OAuth 2.0.
@@ -60,7 +69,8 @@ def refresh_access_token(
     Args:
         client_id: LWA Client ID (defaults to SP_LWA_CLIENT_ID env var)
         client_secret: LWA Client Secret (defaults to SP_LWA_CLIENT_SECRET env var)
-        refresh_token: SP-API Refresh Token (defaults to SP_REFRESH_TOKEN_NA env var)
+        refresh_token: SP-API Refresh Token (defaults to SP_REFRESH_TOKEN_{region} env var)
+        region: API region - 'NA', 'EU', or 'FE' (default: 'NA')
 
     Returns:
         New access token string
@@ -69,10 +79,13 @@ def refresh_access_token(
         ValueError: If credentials are missing
         requests.HTTPError: If token refresh fails
     """
+    region = region.upper()
+    env_var = f"SP_REFRESH_TOKEN_{region}"
+
     # Get credentials from environment if not provided
     client_id = client_id or os.environ.get("SP_LWA_CLIENT_ID")
     client_secret = client_secret or os.environ.get("SP_LWA_CLIENT_SECRET")
-    refresh_token = refresh_token or os.environ.get("SP_REFRESH_TOKEN_NA")
+    refresh_token = refresh_token or os.environ.get(env_var)
 
     # Validate credentials
     if not all([client_id, client_secret, refresh_token]):
@@ -82,7 +95,7 @@ def refresh_access_token(
         if not client_secret:
             missing.append("SP_LWA_CLIENT_SECRET")
         if not refresh_token:
-            missing.append("SP_REFRESH_TOKEN_NA")
+            missing.append(env_var)
         raise ValueError(f"Missing required credentials: {', '.join(missing)}")
 
     # Make token refresh request
@@ -102,14 +115,16 @@ def refresh_access_token(
     response.raise_for_status()
     data = response.json()
 
-    # Cache the new token
+    # Cache the new token for this region
     access_token = data["access_token"]
     expires_in = data.get("expires_in", 3600)  # Default 1 hour
 
-    _token_cache["access_token"] = access_token
-    _token_cache["expires_at"] = datetime.now() + timedelta(seconds=expires_in)
+    _token_cache[region] = {
+        "access_token": access_token,
+        "expires_at": datetime.now() + timedelta(seconds=expires_in)
+    }
 
-    print(f"✓ Access token refreshed, expires in {expires_in} seconds")
+    print(f"✓ Access token refreshed for {region}, expires in {expires_in} seconds")
 
     return access_token
 

@@ -64,6 +64,12 @@ from utils.db import (
 # Default marketplaces
 DEFAULT_MARKETPLACES = ["USA", "CA", "MX"]
 
+MARKETPLACES_BY_REGION = {
+    "NA": ["USA", "CA", "MX"],
+    "EU": ["UK", "DE", "FR", "IT", "ES", "UAE"],
+    "FE": ["AU"]
+}
+
 
 def parse_decimal(value: str) -> float:
     """Parse string to decimal/float, handling empty strings and None."""
@@ -263,6 +269,13 @@ def main():
         help="Specific marketplace to pull (e.g., USA, CA, MX)"
     )
     parser.add_argument(
+        "--region",
+        type=str,
+        default="NA",
+        choices=["NA", "EU", "FE"],
+        help="Region to pull. Default: NA"
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Pull data but don't write to database"
@@ -270,11 +283,13 @@ def main():
 
     args = parser.parse_args()
 
+    region = args.region.upper()
+
     # Determine marketplaces
     if args.marketplace:
         marketplaces = [args.marketplace.upper()]
     else:
-        marketplaces = DEFAULT_MARKETPLACES
+        marketplaces = MARKETPLACES_BY_REGION.get(region, DEFAULT_MARKETPLACES)
 
     # Validate
     for mp in marketplaces:
@@ -284,13 +299,14 @@ def main():
 
     print("=" * 60)
     print("FBA FEE ESTIMATES PULL")
+    print(f"Region: {region}")
     print(f"Marketplaces: {', '.join(marketplaces)}")
     print(f"Dry run: {args.dry_run}")
     print("=" * 60)
 
     # Get access token
     print("\nGetting access token...")
-    access_token = get_access_token()
+    access_token = get_access_token(region=region)
     print("✓ Access token obtained")
 
     # Process each marketplace
@@ -305,7 +321,7 @@ def main():
         result = pull_marketplace_fba_fees(
             access_token,
             marketplace,
-            region="NA",
+            region=region,
             dry_run=args.dry_run
         )
         results.append(result)

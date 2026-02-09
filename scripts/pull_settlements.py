@@ -328,8 +328,15 @@ def main():
     parser.add_argument(
         "--marketplace",
         type=str,
-        help="Marketplace to use for LIST API call (default: USA). "
-             "Note: All NA settlements are returned regardless of marketplace."
+        help="Marketplace to use for LIST API call (default: auto per region). "
+             "Note: All settlements for the region are returned regardless of marketplace."
+    )
+    parser.add_argument(
+        "--region",
+        type=str,
+        default="NA",
+        choices=["NA", "EU", "FE"],
+        help="Region to pull. Default: NA"
     )
     parser.add_argument(
         "--dry-run",
@@ -345,36 +352,40 @@ def main():
 
     args = parser.parse_args()
 
+    region = args.region.upper()
+
     # Determine since date
     if args.since:
         since_date = f"{args.since}T00:00:00Z" if "T" not in args.since else args.since
     else:
         since_date = get_default_since_date()
 
-    # Marketplace for listing (any NA marketplace returns all NA settlements)
-    list_marketplace = (args.marketplace or "USA").upper()
+    # Default list marketplace per region (any marketplace in the region works)
+    DEFAULT_LIST_MARKETPLACE = {"NA": "USA", "EU": "UK", "FE": "AU"}
+    list_marketplace = (args.marketplace or DEFAULT_LIST_MARKETPLACE.get(region, "USA")).upper()
     if list_marketplace not in MARKETPLACE_IDS:
         print(f"Error: Invalid marketplace '{list_marketplace}'")
         sys.exit(1)
 
     print("=" * 60)
     print("SETTLEMENT REPORT PULL")
+    print(f"Region: {region}")
     print(f"Since: {since_date}")
-    print(f"List marketplace: {list_marketplace} (all NA settlements returned)")
+    print(f"List marketplace: {list_marketplace} (all {region} settlements returned)")
     print(f"Max reports: {args.max_reports}")
     print(f"Dry run: {args.dry_run}")
     print("=" * 60)
 
     # Get access token
     print("\nGetting access token...")
-    access_token = get_access_token()
+    access_token = get_access_token(region=region)
     print("✓ Access token obtained")
 
-    # Process all settlement reports (single run for entire NA region)
+    # Process all settlement reports (single run for entire region)
     result = pull_settlement_reports(
         access_token,
         since_date,
-        region="NA",
+        region=region,
         dry_run=args.dry_run,
         max_reports=args.max_reports,
         list_marketplace=list_marketplace

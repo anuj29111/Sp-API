@@ -11,9 +11,18 @@ on:
         required: false
         type: string
       marketplace:
-        description: 'Marketplace (leave empty for all NA)'
+        description: 'Marketplace (leave empty for all in region)'
         required: false
         type: string
+      region:
+        description: 'Region to pull (NA, EU, FE). Leave empty for all regions'
+        required: false
+        type: choice
+        options:
+          - ''
+          - 'NA'
+          - 'EU'
+          - 'FE'
       dry_run:
         description: 'Dry run (no DB writes)'
         required: false
@@ -24,6 +33,10 @@ jobs:
   pull-storage-fees:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        region: ${{ github.event.inputs.region != '' && fromJSON(format('["{0}"]', github.event.inputs.region)) || fromJSON('["NA", "EU", "FE"]') }}
 
     steps:
       - name: Checkout repository
@@ -38,16 +51,18 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Pull Storage Fees
+      - name: Pull Storage Fees (${{ matrix.region }})
         env:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
           SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SP_REFRESH_TOKEN_EU: ${{ secrets.SP_REFRESH_TOKEN_EU }}
+          SP_REFRESH_TOKEN_FE: ${{ secrets.SP_REFRESH_TOKEN_FE }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           cd scripts
-          ARGS=""
+          ARGS="--region ${{ matrix.region }}"
           if [ -n "${{ github.event.inputs.month }}" ]; then
             ARGS="$ARGS --month ${{ github.event.inputs.month }}"
           fi

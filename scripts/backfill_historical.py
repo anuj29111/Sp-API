@@ -63,6 +63,12 @@ BATCH_PAUSE_SECONDS = 120  # Pause between batches
 # North America marketplaces
 NA_MARKETPLACES = ["USA", "CA", "MX"]
 
+MARKETPLACES_BY_REGION = {
+    "NA": ["USA", "CA", "MX"],
+    "EU": ["UK", "DE", "FR", "IT", "ES", "UAE"],
+    "FE": ["AU"]
+}
+
 # State file for resume capability
 STATE_FILE = Path(__file__).parent / ".backfill_state.json"
 
@@ -200,7 +206,7 @@ def pull_single_day(
     try:
         # Get fresh access token if not provided
         if not access_token:
-            access_token = get_access_token()
+            access_token = get_access_token(region=region)
 
         # Create tracking records
         import_id = create_data_import(marketplace_code, report_date)
@@ -375,7 +381,7 @@ def run_backfill(
 
     # Get initial access token
     print("\n🔑 Getting access token...")
-    access_token = get_access_token()
+    access_token = get_access_token(region=region)
     token_time = time.time()
 
     # Process in batches
@@ -399,7 +405,7 @@ def run_backfill(
             # Refresh token every 30 minutes
             if time.time() - token_time > 1800:
                 print("🔑 Refreshing access token...")
-                access_token = get_access_token()
+                access_token = get_access_token(region=region)
                 token_time = time.time()
 
             # Pull data
@@ -548,18 +554,20 @@ def main():
         print(f"❌ Error: Start date {start_date} is after end date {end_date}")
         sys.exit(1)
 
+    region = args.region.upper()
+
     # Determine marketplaces
     if args.marketplace:
         marketplaces = [args.marketplace.upper()]
     else:
-        marketplaces = NA_MARKETPLACES
+        marketplaces = MARKETPLACES_BY_REGION.get(region, NA_MARKETPLACES)
 
     # Run backfill
     stats = run_backfill(
         marketplaces=marketplaces,
         start_date=start_date,
         end_date=end_date,
-        region=args.region,
+        region=region,
         skip_existing=not args.force,
         dry_run=args.dry_run
     )

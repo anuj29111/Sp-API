@@ -48,6 +48,8 @@ POP System (Advertising API) ─────────────────
 | Views | ✅ Weekly, Monthly, Rolling metrics (MATERIALIZED) |
 | Backfill | 🔄 Auto-running 4x/day |
 | NA Authorization | ✅ USA, CA, MX working |
+| EU Authorization | ✅ UK, DE, FR, IT, ES, UAE working |
+| FE Authorization | ✅ AU working |
 
 **Data Available:**
 - `units_ordered`, `ordered_product_sales` - Sales metrics
@@ -85,7 +87,7 @@ POP System (Advertising API) ─────────────────
 
 | Data | Source | Status | Records |
 |------|--------|--------|---------|
-| **FBA Inventory** | FBA Inventory API (v1/summaries) | ✅ Working | 269 records daily |
+| **FBA Inventory** | FBA Inventory API (v1/summaries) | ✅ Working | 735 records/marketplace (pagination fixed Feb 9, 2026) |
 | **AWD Inventory** | AWD API (v2024-05-09) | ✅ Working | 62 records (14,363 units) |
 | **Storage Fees** | Reports API | ✅ Working | 14,227 records/month |
 | **Inventory Age** | Reports API | ⚠️ BLOCKED | Amazon API returns FATAL |
@@ -101,6 +103,12 @@ POP System (Advertising API) ─────────────────
 | 6 | Inbound Shipped | `inbound_shipped_quantity` | `sp_fba_inventory` |
 
 **Known Issue:** `GET_FBA_INVENTORY_AGED_DATA` returns FATAL status - this is a known Amazon API issue affecting many sellers. A fallback report exists but doesn't include age bucket breakdowns.
+
+**Data Validation (Feb 9, 2026 — GorillaROI cross-check):**
+- **Sales (Feb 7):** 104/110 ASINs exact match (94.5%), 6 off by ±1 unit (attribution timing). Supabase total 557 units vs GorillaROI 514 — difference is ASINs GorillaROI doesn't track.
+- **FBA Inventory:** All comparable ASINs within 1-12 unit variance (normal timing). USA: 735 records, ~96,663 fulfillable units (matches GorillaROI ~96,619).
+- **AWD Inventory:** 4/4 mapped ASINs exact match on both available and inbound quantities.
+- **Pagination Bug Fixed:** Code was reading `nextToken` from `result["payload"]` instead of `result["pagination"]`. Only 50 of ~735 records were stored per marketplace since system started. Fixed Feb 9, 2026.
 
 ### Phase 2.5: Search Query Performance (SQP/SCP) ✅ COMPLETE & VERIFIED
 
@@ -287,9 +295,11 @@ POP System (Advertising API) ─────────────────
 - **Re-pull**: Automatically re-pulls dates that returned 0 ASINs
 
 ```bash
-gh workflow run daily-pull.yml                         # Default: both modes
-gh workflow run daily-pull.yml -f date=2026-02-05      # Specific date
-gh workflow run daily-pull.yml -f marketplace=USA      # Single marketplace
+gh workflow run daily-pull.yml                                    # Default: all regions, both modes
+gh workflow run daily-pull.yml -f date=2026-02-05                 # Specific date
+gh workflow run daily-pull.yml -f marketplace=USA                 # Single marketplace
+gh workflow run daily-pull.yml -f region=EU                       # EU region only
+gh workflow run daily-pull.yml -f marketplace=UK -f region=EU     # Single EU marketplace
 ```
 
 ### FBA & AWD Inventory Pull (`inventory-daily.yml`)
@@ -297,9 +307,10 @@ gh workflow run daily-pull.yml -f marketplace=USA      # Single marketplace
 - **Report Types**: `all`, `inventory`, `awd`, `age`
 
 ```bash
-gh workflow run inventory-daily.yml                              # All types
-gh workflow run inventory-daily.yml -f report_type=inventory     # FBA only
-gh workflow run inventory-daily.yml -f report_type=awd           # AWD only
+gh workflow run inventory-daily.yml                                       # All types, all regions
+gh workflow run inventory-daily.yml -f report_type=inventory              # FBA only
+gh workflow run inventory-daily.yml -f report_type=awd                    # AWD only (NA only)
+gh workflow run inventory-daily.yml -f region=EU                          # EU region only
 ```
 
 ### Monthly Storage Fees (`storage-fees-monthly.yml`)
@@ -307,6 +318,7 @@ gh workflow run inventory-daily.yml -f report_type=awd           # AWD only
 
 ```bash
 gh workflow run storage-fees-monthly.yml -f month=2025-12 -f marketplace=USA
+gh workflow run storage-fees-monthly.yml -f region=EU                          # EU region only
 ```
 
 ### Historical Backfill (`historical-backfill.yml`)
@@ -316,8 +328,9 @@ gh workflow run storage-fees-monthly.yml -f month=2025-12 -f marketplace=USA
 - **Resume**: Automatically skips existing data and continues from where it left off
 
 ```bash
-gh workflow run historical-backfill.yml -f mode=full   # Manual trigger
-# Usually no need - it runs automatically until backfill is complete
+gh workflow run historical-backfill.yml -f mode=full              # All regions, manual trigger
+gh workflow run historical-backfill.yml -f region=EU              # EU only
+gh workflow run historical-backfill.yml -f region=FE -f mode=year # FE, last year only
 ```
 
 ### Near-Real-Time Orders (`orders-daily.yml`)
@@ -328,9 +341,10 @@ gh workflow run historical-backfill.yml -f mode=full   # Manual trigger
 - **Timeout**: 60 minutes
 
 ```bash
-gh workflow run orders-daily.yml                                    # All NA, today + yesterday
+gh workflow run orders-daily.yml                                    # All regions, today + yesterday
 gh workflow run orders-daily.yml -f marketplace=USA                 # Single marketplace
 gh workflow run orders-daily.yml -f date=2026-02-07                 # Specific date
+gh workflow run orders-daily.yml -f region=EU                       # EU region only
 gh workflow run orders-daily.yml -f today_only=true                 # Skip yesterday catch-up
 gh workflow run orders-daily.yml -f marketplace=USA -f dry_run=true # Test without DB writes
 ```
@@ -368,9 +382,10 @@ gh workflow run sqp-backfill.yml -f start_date=2024-01-01                   # Fr
 - **Auto-skip**: Already-processed settlement IDs are skipped
 
 ```bash
-gh workflow run settlements-weekly.yml                                      # Last 30 days, all NA
+gh workflow run settlements-weekly.yml                                      # Last 30 days, all regions
 gh workflow run settlements-weekly.yml -f since=2026-01-01                   # Since specific date
-gh workflow run settlements-weekly.yml -f marketplace=USA --dry-run          # Test
+gh workflow run settlements-weekly.yml -f region=EU                          # EU region only
+gh workflow run settlements-weekly.yml -f marketplace=USA -f dry_run=true    # Test
 ```
 
 ### Settlement Backfill (`settlement-backfill.yml`)
@@ -380,8 +395,9 @@ gh workflow run settlements-weekly.yml -f marketplace=USA --dry-run          # T
 - **Auto-skip**: Already-processed settlements skipped (idempotent)
 
 ```bash
-gh workflow run settlement-backfill.yml                                     # Default: since 2024-01-01
+gh workflow run settlement-backfill.yml                                     # Default: since 2024-01-01, all regions
 gh workflow run settlement-backfill.yml -f since=2025-01-01                 # Custom start
+gh workflow run settlement-backfill.yml -f region=EU                        # EU region only
 gh workflow run settlement-backfill.yml -f marketplace=USA                  # Single marketplace
 gh workflow run settlement-backfill.yml -f dry_run=true                     # Test first
 ```
@@ -392,8 +408,9 @@ gh workflow run settlement-backfill.yml -f dry_run=true                     # Te
 - **Pattern**: CREATE → POLL → DOWNLOAD (standard report)
 
 ```bash
-gh workflow run reimbursements-weekly.yml                                   # Last 60 days, all NA
+gh workflow run reimbursements-weekly.yml                                   # Last 60 days, all regions
 gh workflow run reimbursements-weekly.yml -f start_date=2024-01-01          # Backfill
+gh workflow run reimbursements-weekly.yml -f region=EU                      # EU region only
 gh workflow run reimbursements-weekly.yml -f marketplace=USA                # Single marketplace
 ```
 
@@ -403,8 +420,9 @@ gh workflow run reimbursements-weekly.yml -f marketplace=USA                # Si
 - **Limitation**: Can only be requested once/day per seller
 
 ```bash
-gh workflow run financial-daily.yml                                         # All NA marketplaces
+gh workflow run financial-daily.yml                                         # All regions
 gh workflow run financial-daily.yml -f marketplace=USA                      # Single marketplace
+gh workflow run financial-daily.yml -f region=EU                            # EU region only
 gh workflow run financial-daily.yml -f dry_run=true                         # Test
 ```
 
@@ -426,16 +444,31 @@ gh workflow run financial-daily.yml -f dry_run=true                         # Te
 | AU | Australia/Sydney (AEST) | FE |
 | JP | Asia/Tokyo (JST) | FE |
 
-### Currently Authorized (NA Region)
+### Authorized Regions & Marketplaces
+
+**NA Region:**
 | Country | Code | Amazon ID |
 |---------|------|-----------|
 | USA | USA | ATVPDKIKX0DER |
 | Canada | CA | A2EUQ1WTGCTBG2 |
 | Mexico | MX | A1AM78C64UM0Y8 |
 
-### Pending Authorization
-- **EU Region**: UK, Germany, France, Italy, Spain, UAE
-- **FE Region**: Australia, Japan
+**EU Region:**
+| Country | Code | Amazon ID |
+|---------|------|-----------|
+| UK | UK | A1F83G8C2ARO7P |
+| Germany | DE | A1PA6795UKMFR9 |
+| France | FR | A13V1IB3VIYZZH |
+| Italy | IT | APJ6JRA9NG5V4 |
+| Spain | ES | A1RKKUPIHCS9HS |
+| UAE | UAE | A2VIGQ35RCS4UG |
+
+**FE Region:**
+| Country | Code | Amazon ID |
+|---------|------|-----------|
+| Australia | AU | A39IBJ37TRP1C6 |
+
+**Not authorized** (Chalkola doesn't operate): Japan (JP)
 
 ---
 
@@ -457,18 +490,18 @@ gh run list --workflow=financial-daily.yml --limit 5
 # View workflow logs
 gh run view <run_id> --log | tail -50
 
-# Manual triggers
+# Manual triggers (all support -f region=NA/EU/FE)
 gh workflow run daily-pull.yml
-gh workflow run daily-pull.yml -f date=2026-02-05
-gh workflow run orders-daily.yml -f marketplace=USA
+gh workflow run daily-pull.yml -f date=2026-02-05 -f region=EU
+gh workflow run orders-daily.yml -f marketplace=UK -f region=EU
 gh workflow run orders-daily.yml -f marketplace=USA -f dry_run=true
 gh workflow run inventory-daily.yml -f report_type=all
 gh workflow run sqp-weekly.yml
 gh workflow run sqp-backfill.yml -f marketplace=CA -f report_type=SCP
-gh workflow run settlements-weekly.yml
-gh workflow run settlement-backfill.yml -f dry_run=true
+gh workflow run settlements-weekly.yml -f region=EU
+gh workflow run settlement-backfill.yml -f region=FE -f dry_run=true
 gh workflow run reimbursements-weekly.yml -f start_date=2024-01-01
-gh workflow run financial-daily.yml
+gh workflow run financial-daily.yml -f region=EU
 ```
 
 ```sql
@@ -588,25 +621,24 @@ GROUP BY m.name;
 
 ## Automation Summary
 
-All systems are fully automated with no manual intervention required:
+All systems are fully automated with no manual intervention required. All workflows run for **3 regions (NA, EU, FE)** in parallel using GitHub Actions matrix strategy (`fail-fast: false`).
 
-| System | Schedule | Status |
-|--------|----------|--------|
-| **Daily Sales Pull** | 4x/day (2, 8, 14, 20 UTC) | ✅ Running |
-| **Near-Real-Time Orders** | 6x/day (0, 4, 8, 12, 16, 20 UTC) | ✅ Running |
-| **14-Day Attribution Refresh** | 4x/day (with daily pull) | ✅ Running |
-| **Materialized View Refresh** | After each daily pull | ✅ Running |
-| **FBA/AWD Inventory** | 3 AM UTC daily | ✅ Running |
-| **Monthly Inventory Snapshot** | 1st-2nd of month | ✅ Configured |
-| **Storage Fees** | 5th of month | ✅ Configured |
-| **Historical Backfill** | 4x/day (0, 6, 12, 18 UTC) | 🔄 Running |
-| **SQP/SCP Weekly Pull** | Tuesdays 4 AM UTC | ✅ Verified & Running |
-| **SQP/SCP Monthly Pull** | 4th of month 4 AM UTC | ✅ Configured |
-| **SQP/SCP Backfill** | 3x/day (1, 9, 17 UTC) | ✅ Running |
-| **Settlement Reports** | Tuesdays 7 AM UTC | ✅ Verified & Running (536K tx) |
-| **Settlement Backfill** | Manual trigger | ✅ Complete (90-day max lookback) |
-| **Reimbursements** | Mondays 6 AM UTC | ⚠️ USA/CA FATAL (MX working, 914 rows) |
-| **FBA Fee Estimates** | Daily 5 AM UTC | ✅ Working (all 3 NA, 1,560 rows) |
+| System | Schedule | Regions | Status |
+|--------|----------|---------|--------|
+| **Daily Sales Pull** | 4x/day (2, 8, 14, 20 UTC) | NA, EU, FE | ✅ Running |
+| **Near-Real-Time Orders** | 6x/day (0, 4, 8, 12, 16, 20 UTC) | NA, EU, FE | ✅ Running |
+| **14-Day Attribution Refresh** | 4x/day (with daily pull) | NA, EU, FE | ✅ Running |
+| **Materialized View Refresh** | After each daily pull (NA only) | NA | ✅ Running |
+| **FBA/AWD Inventory** | 3 AM UTC daily | NA, EU, FE (AWD: NA only) | ✅ Running |
+| **Monthly Inventory Snapshot** | 1st-2nd of month | NA | ✅ Configured |
+| **Storage Fees** | 5th of month | NA, EU, FE | ✅ Configured |
+| **Historical Backfill** | 4x/day (0, 6, 12, 18 UTC) | NA, EU, FE | 🔄 Running |
+| **SQP/SCP Weekly Pull** | Tuesdays 4 AM UTC | NA only | ✅ Verified & Running |
+| **SQP/SCP Backfill** | 3x/day (1, 9, 17 UTC) | NA only | ✅ Running |
+| **Settlement Reports** | Tuesdays 7 AM UTC | NA, EU, FE | ✅ Running |
+| **Settlement Backfill** | Manual trigger | NA, EU, FE | ✅ Available |
+| **Reimbursements** | Mondays 6 AM UTC | NA, EU, FE | ⚠️ USA/CA FATAL (MX working) |
+| **FBA Fee Estimates** | Daily 5 AM UTC | NA, EU, FE | ✅ Working |
 
 ---
 
@@ -623,6 +655,7 @@ All systems are fully automated with no manual intervention required:
 - **Amazon API FATAL**: USA/CA Reimbursements and Inventory Age return FATAL status. This is a known widespread Amazon API issue. Cron retries automatically. FBA Fee Estimates now working for all 3 NA marketplaces (resolved ~Feb 8, 2026).
 - **SQP Large Upserts**: USA SQP generates ~6,000+ rows per weekly pull. Fixed: upserts now use 200-row chunks and write per-batch (not accumulated). Verified working Feb 7, 2026.
 - **Cross-Workflow Rate Limits**: Each GitHub Actions workflow has its own `RateLimitHandler` (per-process, no shared state). This is fine — total usage is ~150-200 createReport calls/day out of 1,440 available (1/min). Retry/backoff handles any 429 collisions.
+- **~~FBA Inventory Pagination~~** *(FIXED Feb 9, 2026)*: Code read `nextToken` from `result["payload"]` instead of `result["pagination"]`, causing only 50 of ~735 records to be stored per marketplace per day. All historical FBA inventory data (4 days) had only 50 records each. Fixed in `fba_inventory_api.py`. Verified: 735 records across 15 pages now stored correctly.
 
 ---
 
@@ -662,15 +695,19 @@ SUPABASE DATABASE
 
 ### Marketplace UUIDs
 
-| Country | UUID |
-|---------|------|
-| USA | `f47ac10b-58cc-4372-a567-0e02b2c3d479` |
-| Canada | `a1b2c3d4-58cc-4372-a567-0e02b2c3d480` |
-| Mexico | `c9d0e1f2-58cc-4372-a567-0e02b2c3d488` |
-| UK | `b2c3d4e5-58cc-4372-a567-0e02b2c3d481` |
-| Germany | `c3d4e5f6-58cc-4372-a567-0e02b2c3d482` |
-| UAE | `e5f6a7b8-58cc-4372-a567-0e02b2c3d484` |
-| Australia | `f6a7b8c9-58cc-4372-a567-0e02b2c3d485` |
+| Country | Code | UUID |
+|---------|------|------|
+| USA | USA | `f47ac10b-58cc-4372-a567-0e02b2c3d479` |
+| Canada | CA | `a1b2c3d4-58cc-4372-a567-0e02b2c3d480` |
+| Mexico | MX | `c9d0e1f2-58cc-4372-a567-0e02b2c3d488` |
+| UK | UK | `b2c3d4e5-58cc-4372-a567-0e02b2c3d481` |
+| Germany | DE | `c3d4e5f6-58cc-4372-a567-0e02b2c3d482` |
+| France | FR | `d4e5f6a7-58cc-4372-a567-0e02b2c3d483` |
+| UAE | UAE | `e5f6a7b8-58cc-4372-a567-0e02b2c3d484` |
+| Australia | AU | `f6a7b8c9-58cc-4372-a567-0e02b2c3d485` |
+| Japan | JP | `a7b8c9d0-58cc-4372-a567-0e02b2c3d486` |
+| Italy | IT | `b8c9d0e1-58cc-4372-a567-0e02b2c3d487` |
+| Spain | ES | `d0e1f2a3-58cc-4372-a567-0e02b2c3d489` |
 
 ### Apps Script Menu
 
@@ -716,7 +753,7 @@ Supabase Data:
 | SP Data USA sheet | ✅ Working | ~6,959 monthly + ~20,760 weekly rows (with pagination) |
 | SP Data CA/MX | ✅ Ready | Menu functions ready |
 | SP Rolling sheets | ✅ Ready | USA: ~569 rows, CA: ~299, MX: ~157 |
-| SP Inventory sheets | ✅ Ready | FBA + AWD joined by SKU, ~50 rows/country |
+| SP Inventory sheets | ✅ Ready | FBA + AWD joined by SKU, ~735 rows/country (pagination fixed) |
 | SP Fees sheets | ✅ Ready | Fee estimates + settlement actuals + storage |
 | SUMIFS formulas | ✅ Working | Jan/Feb 2026 pulling correctly |
 
@@ -834,7 +871,7 @@ Supabase Data:
 1. Copy updated `supabase_sales.gs` from `/Sp-API/google-sheets/supabase_sales.gs` to Apps Script editor
 2. Run `refreshSPDataUSA()` — verify row count >1000 (should be ~27,700 with pagination fix)
 3. Run `refreshRollingUSA()` — verify ~569 rows with 7/14/30/60 day data
-4. Run `refreshInventoryUSA()` — verify ~50 rows with FBA + AWD columns
+4. Run `refreshInventoryUSA()` — verify ~735 rows with FBA + AWD columns (pagination fixed)
 5. Run `refreshFeesUSA()` — verify fee estimates + settlement + storage populated
 6. Run CA and MX refreshes
 7. Verify fee data accuracy against GorillaROI (e.g., 40 Chalk 6mm ≈ $6.10/unit)
@@ -861,24 +898,21 @@ Supabase Data:
 
 ### Future: Phase 6 — Web Dashboard
 
-### Future: EU/UK Region Expansion
-1. Obtain `SP_REFRESH_TOKEN_EU` from Amazon Seller Central
-2. Update `auth.py` to support EU region token selection
-3. Add EU marketplace codes (scripts already have EU endpoint + marketplace ID mappings)
-
 ---
 
 ## GitHub Secrets
 
 | Secret | Purpose |
 |--------|---------|
-| `SP_LWA_CLIENT_ID` | Amazon SP-API credentials |
-| `SP_LWA_CLIENT_SECRET` | Amazon SP-API credentials |
-| `SP_REFRESH_TOKEN_NA` | North America refresh token |
+| `SP_LWA_CLIENT_ID` | Amazon SP-API credentials (shared across all regions) |
+| `SP_LWA_CLIENT_SECRET` | Amazon SP-API credentials (shared across all regions) |
+| `SP_REFRESH_TOKEN_NA` | North America refresh token (USA, CA, MX) |
+| `SP_REFRESH_TOKEN_EU` | Europe refresh token (UK, DE, FR, IT, ES, UAE) |
+| `SP_REFRESH_TOKEN_FE` | Far East refresh token (AU) |
 | `SUPABASE_URL` | Database URL |
 | `SUPABASE_SERVICE_KEY` | Database access |
 | `SLACK_WEBHOOK_URL` | Slack alerts for failures |
 
 ---
 
-*Last Updated: February 8, 2026 (Session 13 — Google Sheets expansion: Added SP Rolling, SP Inventory, SP Fees dump sheets + Refresh ALL. Fixed critical pagination bug (USA weekly 20,760 rows silently truncated to 1,000). Created 3 DB views (sp_storage_fees_by_asin, sp_settlement_fees_by_sku, sp_sku_asin_map). Added anon RLS policies for inventory/storage tables. FBA Fee Estimates now working for all 3 NA (was FATAL for USA). Cleaned up stale pending tasks and removed duplicates.)*
+*Last Updated: February 9, 2026 (Session 15 — Multi-region expansion: EU (UK, DE, FR, IT, ES, UAE) and FE (AU) now fully supported. auth.py uses per-region token cache. All 11 scripts accept --region arg. All 9 workflows use region matrix strategy (NA/EU/FE in parallel). IT, ES, MX marketplaces activated in Supabase. JP excluded — Chalkola doesn't operate there. SQP/SCP remain NA-only pending Brand Analytics availability confirmation.)*

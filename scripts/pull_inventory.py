@@ -57,6 +57,12 @@ logger = logging.getLogger(__name__)
 # Default marketplaces to pull
 DEFAULT_MARKETPLACES = ["USA", "CA", "MX"]
 
+MARKETPLACES_BY_REGION = {
+    "NA": ["USA", "CA", "MX"],
+    "EU": ["UK", "DE", "FR", "IT", "ES", "UAE"],
+    "FE": ["AU"]
+}
+
 
 def create_inventory_pull_record(
     marketplace_code: str,
@@ -281,6 +287,13 @@ def main():
         help="Specific marketplace to pull (e.g., USA, CA, MX)"
     )
     parser.add_argument(
+        "--region",
+        type=str,
+        default="NA",
+        choices=["NA", "EU", "FE"],
+        help="Region to pull. Default: NA"
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Pull data but don't write to database"
@@ -288,11 +301,13 @@ def main():
 
     args = parser.parse_args()
 
+    region = args.region.upper()
+
     # Determine marketplaces to process
     if args.marketplace:
         marketplaces = [args.marketplace.upper()]
     else:
-        marketplaces = DEFAULT_MARKETPLACES
+        marketplaces = MARKETPLACES_BY_REGION.get(region, DEFAULT_MARKETPLACES)
 
     # Validate marketplaces
     for mp in marketplaces:
@@ -304,17 +319,18 @@ def main():
     print("="*60)
     print("FBA INVENTORY PULL (API)")
     print(f"Date: {date.today()}")
+    print(f"Region: {region}")
     print(f"Marketplaces: {', '.join(marketplaces)}")
     print(f"Dry run: {args.dry_run}")
     print("="*60)
 
     # Get access token and create API client
     print("\nGetting access token...")
-    access_token = get_access_token()
+    access_token = get_access_token(region=region)
     print("✓ Access token obtained")
 
     # Create SPAPIClient with retry and rate limiting
-    client = SPAPIClient(access_token, region="NA")
+    client = SPAPIClient(access_token, region=region)
 
     # Process each marketplace
     results = []
@@ -323,7 +339,7 @@ def main():
 
         result = pull_marketplace_inventory(
             marketplace_code=marketplace,
-            region="NA",
+            region=region,
             dry_run=args.dry_run,
             client=client
         )

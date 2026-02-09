@@ -61,7 +61,7 @@ NA_MARKETPLACES = ["USA", "CA", "MX"]
 MARKETPLACES_BY_REGION = {
     "NA": ["USA", "CA", "MX"],
     "EU": ["UK", "DE", "FR", "IT", "ES", "UAE"],
-    "FE": ["AU", "JP"]
+    "FE": ["AU"]
 }
 
 # Marketplace timezones (same as pull_daily_sales.py)
@@ -201,7 +201,7 @@ def pull_orders_region(
 
     # Get access token
     print("🔑 Getting access token...")
-    access_token = get_access_token()
+    access_token = get_access_token(region=region)
 
     # Create SPAPIClient
     client = SPAPIClient(access_token, region=region)

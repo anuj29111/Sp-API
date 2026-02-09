@@ -42,6 +42,12 @@ from utils.db import (
 # Default marketplaces to pull
 DEFAULT_MARKETPLACES = ["USA", "CA", "MX"]
 
+MARKETPLACES_BY_REGION = {
+    "NA": ["USA", "CA", "MX"],
+    "EU": ["UK", "DE", "FR", "IT", "ES", "UAE"],
+    "FE": ["AU"]
+}
+
 
 def parse_decimal(value: str) -> float:
     """Parse string to decimal/float, handling empty strings and None."""
@@ -270,12 +276,21 @@ def main():
         help="Month to pull fees for (YYYY-MM format). Defaults to previous month."
     )
     parser.add_argument(
+        "--region",
+        type=str,
+        default="NA",
+        choices=["NA", "EU", "FE"],
+        help="Region to pull. Default: NA"
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Pull data but don't write to database"
     )
 
     args = parser.parse_args()
+
+    region = args.region.upper()
 
     # Determine month
     if args.month:
@@ -296,7 +311,7 @@ def main():
     if args.marketplace:
         marketplaces = [args.marketplace.upper()]
     else:
-        marketplaces = DEFAULT_MARKETPLACES
+        marketplaces = MARKETPLACES_BY_REGION.get(region, DEFAULT_MARKETPLACES)
 
     # Validate marketplaces
     for mp in marketplaces:
@@ -306,6 +321,7 @@ def main():
 
     print("="*60)
     print("STORAGE FEE PULL")
+    print(f"Region: {region}")
     print(f"Month: {month.strftime('%Y-%m')}")
     print(f"Marketplaces: {', '.join(marketplaces)}")
     print(f"Dry run: {args.dry_run}")
@@ -313,7 +329,7 @@ def main():
 
     # Get access token
     print("\nGetting access token...")
-    access_token = get_access_token()
+    access_token = get_access_token(region=region)
     print("✓ Access token obtained")
 
     # Process each marketplace
@@ -327,7 +343,7 @@ def main():
             access_token,
             marketplace,
             month,
-            region="NA",
+            region=region,
             dry_run=args.dry_run
         )
         results.append(result)
