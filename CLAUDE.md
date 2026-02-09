@@ -533,11 +533,27 @@ SUPABASE DATABASE
 |---------|--------|-------|
 | Supabase connection | ✅ Working | Test connection passes |
 | Pagination (>1000 rows) | ✅ Fixed | Range header pagination |
-| SP Data USA sheet | ✅ Working | ~27,700 rows (with pagination) |
-| SP Rolling sheets | ✅ Ready | USA: ~569 rows |
-| SP Inventory sheets | ✅ Ready | FBA + AWD joined by SKU |
-| SP Fees sheets | ✅ Ready | Fee estimates + settlement actuals + storage |
+| SP Data sheets | ✅ Working | All 10 marketplaces (USA, CA, MX, UK, DE, FR, IT, ES, AU, UAE) |
+| SP Rolling sheets | ✅ Working | All 10 marketplaces |
+| SP Inventory sheets | ✅ Working | FBA + AWD joined by SKU. Includes EU EFN local/remote columns. AWD = NA only. |
+| SP Fees sheets | ✅ Working | Fee estimates + settlement actuals + storage |
 | SUMIFS formulas | ✅ Working | Jan/Feb 2026 pulling correctly |
+| Menu organization | ✅ Done | Grouped by region (NA / EU / FE / UAE) |
+
+### Supported Marketplaces (Config Keys)
+
+| Country | Config Key | Region | Notes |
+|---------|-----------|--------|-------|
+| USA | US | NA | Full data (sales, rolling, inventory+AWD, fees+settlements+storage) |
+| Canada | CA | NA | Full data |
+| Mexico | MX | NA | Full data |
+| UK | UK | EU | Sales, rolling, inventory (EFN local/remote), fees+settlements. No AWD, no storage. |
+| Germany | DE | EU | Same as UK |
+| France | FR | EU | Sales, rolling, inventory, fees. No settlements yet, no AWD, no storage. |
+| Italy | IT | EU | Same as FR |
+| Spain | ES | EU | Same as FR |
+| Australia | AU | FE | Sales, rolling, inventory, fees+settlements. No AWD, no storage. |
+| UAE | UAE | UAE | Sales, rolling, inventory, fees. No settlements, no AWD, no storage. |
 
 ---
 
@@ -551,9 +567,10 @@ SUPABASE DATABASE
 
 ### Google Sheets — Copy & Test
 1. Copy updated `supabase_sales.gs` to Apps Script editor
-2. Test all refresh functions (USA, CA, MX)
-3. Add EU/FE marketplace menu entries
-4. Verify fee data accuracy against GorillaROI
+2. Test all refresh functions (all 10 marketplaces)
+3. ~~Add EU/FE marketplace menu entries~~ ✅ DONE (Session 18)
+4. Add marketplace UUIDs to Script Config sheet for: UK, DE, FR, IT, ES, AU, UAE
+5. Verify fee data accuracy against GorillaROI
 
 ### Google Sheets — Formula Refinement
 1. Test date conversion formula for older months
@@ -593,4 +610,4 @@ SUPABASE DATABASE
 
 ---
 
-*Last Updated: February 9, 2026 (Session 17 — UAE added as 4th region with separate refresh token. SP_REFRESH_TOKEN_UAE secret added. All 30 files updated: auth.py, 6 utils modules, 12 pull/backfill scripts, 11 workflow YAMLs. UAE uses EU API endpoint but own token. All workflows now run 4 regions (NA, EU, FE, UAE) in parallel. UAE inventory uses report-based approach same as EU.)*
+*Last Updated: February 9, 2026 (Session 18 — Google Sheets integration expanded to all 10 marketplaces. Added refresh functions for UK, DE, FR, IT, ES, AU, UAE. Menu organized by region (NA/EU/FE/UAE). Inventory sheets now include EU EFN local/remote columns. Formula examples updated.)*

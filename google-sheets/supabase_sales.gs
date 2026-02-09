@@ -275,11 +275,11 @@ function getFBAInventoryLatest(marketplaceId, config) {
   var latestDate = dateResult[0].date;
   Logger.log('FBA inventory latest date: ' + latestDate);
 
-  // Fetch all inventory for that date
+  // Fetch all inventory for that date (includes EU EFN local/remote columns)
   var url = config.url + '/rest/v1/sp_fba_inventory?' +
     'marketplace_id=eq.' + marketplaceId +
     '&date=eq.' + latestDate +
-    '&select=asin,sku,product_name,fulfillable_quantity,reserved_quantity,inbound_working_quantity,inbound_shipped_quantity,inbound_receiving_quantity,unsellable_quantity,total_quantity' +
+    '&select=asin,sku,product_name,fulfillable_quantity,fulfillable_quantity_local,fulfillable_quantity_remote,reserved_quantity,inbound_working_quantity,inbound_shipped_quantity,inbound_receiving_quantity,unsellable_quantity,total_quantity' +
     '&order=asin.asc';
 
   return fetchAllFromSupabase(url, config);
@@ -430,6 +430,13 @@ function getOrCreateSPDataSheet(country) {
 function refreshSPDataUSA() { refreshSPData('USA', 'US'); }
 function refreshSPDataCA() { refreshSPData('CA', 'CA'); }
 function refreshSPDataMX() { refreshSPData('MX', 'MX'); }
+function refreshSPDataUK() { refreshSPData('UK', 'UK'); }
+function refreshSPDataDE() { refreshSPData('DE', 'DE'); }
+function refreshSPDataFR() { refreshSPData('FR', 'FR'); }
+function refreshSPDataIT() { refreshSPData('IT', 'IT'); }
+function refreshSPDataES() { refreshSPData('ES', 'ES'); }
+function refreshSPDataAU() { refreshSPData('AU', 'AU'); }
+function refreshSPDataUAE() { refreshSPData('UAE', 'UAE'); }
 
 function refreshSPData(country, configKey) {
   try {
@@ -510,6 +517,13 @@ function refreshSPData(country, configKey) {
 function refreshRollingUSA() { refreshRollingData('USA', 'US'); }
 function refreshRollingCA() { refreshRollingData('CA', 'CA'); }
 function refreshRollingMX() { refreshRollingData('MX', 'MX'); }
+function refreshRollingUK() { refreshRollingData('UK', 'UK'); }
+function refreshRollingDE() { refreshRollingData('DE', 'DE'); }
+function refreshRollingFR() { refreshRollingData('FR', 'FR'); }
+function refreshRollingIT() { refreshRollingData('IT', 'IT'); }
+function refreshRollingES() { refreshRollingData('ES', 'ES'); }
+function refreshRollingAU() { refreshRollingData('AU', 'AU'); }
+function refreshRollingUAE() { refreshRollingData('UAE', 'UAE'); }
 
 function refreshRollingData(country, configKey) {
   try {
@@ -579,6 +593,13 @@ function refreshRollingData(country, configKey) {
 function refreshInventoryUSA() { refreshInventoryData('USA', 'US'); }
 function refreshInventoryCA() { refreshInventoryData('CA', 'CA'); }
 function refreshInventoryMX() { refreshInventoryData('MX', 'MX'); }
+function refreshInventoryUK() { refreshInventoryData('UK', 'UK'); }
+function refreshInventoryDE() { refreshInventoryData('DE', 'DE'); }
+function refreshInventoryFR() { refreshInventoryData('FR', 'FR'); }
+function refreshInventoryIT() { refreshInventoryData('IT', 'IT'); }
+function refreshInventoryES() { refreshInventoryData('ES', 'ES'); }
+function refreshInventoryAU() { refreshInventoryData('AU', 'AU'); }
+function refreshInventoryUAE() { refreshInventoryData('UAE', 'UAE'); }
 
 function refreshInventoryData(country, configKey) {
   try {
@@ -609,10 +630,10 @@ function refreshInventoryData(country, configKey) {
     // Track which AWD SKUs got matched
     var matchedAWDSKUs = {};
 
-    // Headers
+    // Headers (includes EU EFN local/remote columns)
     var headers = [
       'asin', 'sku', 'product_name',
-      'fba_fulfillable', 'fba_reserved',
+      'fba_fulfillable', 'fba_local', 'fba_remote', 'fba_reserved',
       'fba_inbound_working', 'fba_inbound_shipped', 'fba_inbound_receiving',
       'fba_unsellable', 'fba_total',
       'awd_onhand', 'awd_inbound', 'awd_available', 'awd_total'
@@ -638,7 +659,8 @@ function refreshInventoryData(country, configKey) {
 
       output.push([
         fba.asin || '', fba.sku || '', fba.product_name || '',
-        fba.fulfillable_quantity || 0, fba.reserved_quantity || 0,
+        fba.fulfillable_quantity || 0, fba.fulfillable_quantity_local || 0, fba.fulfillable_quantity_remote || 0,
+        fba.reserved_quantity || 0,
         fba.inbound_working_quantity || 0, fba.inbound_shipped_quantity || 0,
         fba.inbound_receiving_quantity || 0,
         fba.unsellable_quantity || 0, fba.total_quantity || 0,
@@ -672,7 +694,7 @@ function refreshInventoryData(country, configKey) {
           var uAwd = awdBySKU[uSku];
           output.push([
             skuAsinMap[uSku] || '', uSku, '(AWD only)',
-            0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0,
             uAwd.total_onhand_quantity || 0, uAwd.total_inbound_quantity || 0,
             uAwd.available_quantity || 0, uAwd.total_quantity || 0
           ]);
@@ -704,6 +726,13 @@ function refreshInventoryData(country, configKey) {
 function refreshFeesUSA() { refreshFeesData('USA', 'US'); }
 function refreshFeesCA() { refreshFeesData('CA', 'CA'); }
 function refreshFeesMX() { refreshFeesData('MX', 'MX'); }
+function refreshFeesUK() { refreshFeesData('UK', 'UK'); }
+function refreshFeesDE() { refreshFeesData('DE', 'DE'); }
+function refreshFeesFR() { refreshFeesData('FR', 'FR'); }
+function refreshFeesIT() { refreshFeesData('IT', 'IT'); }
+function refreshFeesES() { refreshFeesData('ES', 'ES'); }
+function refreshFeesAU() { refreshFeesData('AU', 'AU'); }
+function refreshFeesUAE() { refreshFeesData('UAE', 'UAE'); }
 
 function refreshFeesData(country, configKey) {
   try {
@@ -810,6 +839,13 @@ function refreshFeesData(country, configKey) {
 function refreshAllUSA() { refreshAll('USA', 'US'); }
 function refreshAllCA() { refreshAll('CA', 'CA'); }
 function refreshAllMX() { refreshAll('MX', 'MX'); }
+function refreshAllUK() { refreshAll('UK', 'UK'); }
+function refreshAllDE() { refreshAll('DE', 'DE'); }
+function refreshAllFR() { refreshAll('FR', 'FR'); }
+function refreshAllIT() { refreshAll('IT', 'IT'); }
+function refreshAllES() { refreshAll('ES', 'ES'); }
+function refreshAllAU() { refreshAll('AU', 'AU'); }
+function refreshAllUAE() { refreshAll('UAE', 'UAE'); }
 
 function refreshAll(country, configKey) {
   try {
@@ -841,29 +877,84 @@ function onOpen() {
       .addItem('Refresh TESTING Sheet', 'refreshTestingSheet'))
     .addSeparator()
     .addSubMenu(ui.createMenu('Sales (Weekly/Monthly)')
+      .addItem('--- NA ---', 'noOp')
       .addItem('Refresh SP Data USA', 'refreshSPDataUSA')
       .addItem('Refresh SP Data CA', 'refreshSPDataCA')
-      .addItem('Refresh SP Data MX', 'refreshSPDataMX'))
+      .addItem('Refresh SP Data MX', 'refreshSPDataMX')
+      .addItem('--- EU ---', 'noOp')
+      .addItem('Refresh SP Data UK', 'refreshSPDataUK')
+      .addItem('Refresh SP Data DE', 'refreshSPDataDE')
+      .addItem('Refresh SP Data FR', 'refreshSPDataFR')
+      .addItem('Refresh SP Data IT', 'refreshSPDataIT')
+      .addItem('Refresh SP Data ES', 'refreshSPDataES')
+      .addItem('--- FE ---', 'noOp')
+      .addItem('Refresh SP Data AU', 'refreshSPDataAU')
+      .addItem('--- UAE ---', 'noOp')
+      .addItem('Refresh SP Data UAE', 'refreshSPDataUAE'))
     .addSeparator()
     .addSubMenu(ui.createMenu('Rolling Averages')
+      .addItem('--- NA ---', 'noOp')
       .addItem('Refresh SP Rolling USA', 'refreshRollingUSA')
       .addItem('Refresh SP Rolling CA', 'refreshRollingCA')
-      .addItem('Refresh SP Rolling MX', 'refreshRollingMX'))
+      .addItem('Refresh SP Rolling MX', 'refreshRollingMX')
+      .addItem('--- EU ---', 'noOp')
+      .addItem('Refresh SP Rolling UK', 'refreshRollingUK')
+      .addItem('Refresh SP Rolling DE', 'refreshRollingDE')
+      .addItem('Refresh SP Rolling FR', 'refreshRollingFR')
+      .addItem('Refresh SP Rolling IT', 'refreshRollingIT')
+      .addItem('Refresh SP Rolling ES', 'refreshRollingES')
+      .addItem('--- FE ---', 'noOp')
+      .addItem('Refresh SP Rolling AU', 'refreshRollingAU')
+      .addItem('--- UAE ---', 'noOp')
+      .addItem('Refresh SP Rolling UAE', 'refreshRollingUAE'))
     .addSeparator()
     .addSubMenu(ui.createMenu('Inventory')
+      .addItem('--- NA ---', 'noOp')
       .addItem('Refresh SP Inventory USA', 'refreshInventoryUSA')
       .addItem('Refresh SP Inventory CA', 'refreshInventoryCA')
-      .addItem('Refresh SP Inventory MX', 'refreshInventoryMX'))
+      .addItem('Refresh SP Inventory MX', 'refreshInventoryMX')
+      .addItem('--- EU ---', 'noOp')
+      .addItem('Refresh SP Inventory UK', 'refreshInventoryUK')
+      .addItem('Refresh SP Inventory DE', 'refreshInventoryDE')
+      .addItem('Refresh SP Inventory FR', 'refreshInventoryFR')
+      .addItem('Refresh SP Inventory IT', 'refreshInventoryIT')
+      .addItem('Refresh SP Inventory ES', 'refreshInventoryES')
+      .addItem('--- FE ---', 'noOp')
+      .addItem('Refresh SP Inventory AU', 'refreshInventoryAU')
+      .addItem('--- UAE ---', 'noOp')
+      .addItem('Refresh SP Inventory UAE', 'refreshInventoryUAE'))
     .addSeparator()
     .addSubMenu(ui.createMenu('Fees & Costs')
+      .addItem('--- NA ---', 'noOp')
       .addItem('Refresh SP Fees USA', 'refreshFeesUSA')
       .addItem('Refresh SP Fees CA', 'refreshFeesCA')
-      .addItem('Refresh SP Fees MX', 'refreshFeesMX'))
+      .addItem('Refresh SP Fees MX', 'refreshFeesMX')
+      .addItem('--- EU ---', 'noOp')
+      .addItem('Refresh SP Fees UK', 'refreshFeesUK')
+      .addItem('Refresh SP Fees DE', 'refreshFeesDE')
+      .addItem('Refresh SP Fees FR', 'refreshFeesFR')
+      .addItem('Refresh SP Fees IT', 'refreshFeesIT')
+      .addItem('Refresh SP Fees ES', 'refreshFeesES')
+      .addItem('--- FE ---', 'noOp')
+      .addItem('Refresh SP Fees AU', 'refreshFeesAU')
+      .addItem('--- UAE ---', 'noOp')
+      .addItem('Refresh SP Fees UAE', 'refreshFeesUAE'))
     .addSeparator()
     .addSubMenu(ui.createMenu('Refresh ALL')
+      .addItem('--- NA ---', 'noOp')
       .addItem('Refresh ALL USA', 'refreshAllUSA')
       .addItem('Refresh ALL CA', 'refreshAllCA')
-      .addItem('Refresh ALL MX', 'refreshAllMX'))
+      .addItem('Refresh ALL MX', 'refreshAllMX')
+      .addItem('--- EU ---', 'noOp')
+      .addItem('Refresh ALL UK', 'refreshAllUK')
+      .addItem('Refresh ALL DE', 'refreshAllDE')
+      .addItem('Refresh ALL FR', 'refreshAllFR')
+      .addItem('Refresh ALL IT', 'refreshAllIT')
+      .addItem('Refresh ALL ES', 'refreshAllES')
+      .addItem('--- FE ---', 'noOp')
+      .addItem('Refresh ALL AU', 'refreshAllAU')
+      .addItem('--- UAE ---', 'noOp')
+      .addItem('Refresh ALL UAE', 'refreshAllUAE'))
     .addSeparator()
     .addSubMenu(ui.createMenu('Debug')
       .addItem('Check Sheet Dates', 'debugTestingSheetDates')
@@ -872,6 +963,9 @@ function onOpen() {
     .addItem('Show Formula Examples', 'showFormulaExamples')
     .addToUi();
 }
+
+/** No-op function used as menu separator labels */
+function noOp() {}
 
 function testConnection() {
   try {
@@ -1157,9 +1251,10 @@ function showFormulaExamples() {
     '=IFERROR(INDEX(\'SP Rolling USA\'!$N:$N, MATCH($C5, \'SP Rolling USA\'!$A:$A, 0)), 0)\n\n' +
 
     'SP INVENTORY COLUMNS:\n' +
-    'A=asin B=sku C=product_name D=fba_fulfillable E=fba_reserved\n' +
-    'F-H=fba_inbound(working/shipped/receiving) I=fba_unsellable J=fba_total\n' +
-    'K=awd_onhand L=awd_inbound M=awd_available N=awd_total\n\n' +
+    'A=asin B=sku C=product_name D=fba_fulfillable E=fba_local F=fba_remote\n' +
+    'G=fba_reserved H-J=fba_inbound(working/shipped/receiving)\n' +
+    'K=fba_unsellable L=fba_total M=awd_onhand N=awd_inbound O=awd_available P=awd_total\n' +
+    '(fba_local/fba_remote are EU Pan-European FBA columns; AWD is NA only)\n\n' +
 
     'FBA Fulfillable:\n' +
     '=IFERROR(INDEX(\'SP Inventory USA\'!$D:$D, MATCH($C5, \'SP Inventory USA\'!$A:$A, 0)), 0)\n\n' +
