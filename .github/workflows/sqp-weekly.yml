@@ -31,8 +31,17 @@ on:
         description: 'Period end date (YYYY-MM-DD). Leave empty for latest.'
         required: false
       marketplace:
-        description: 'Specific marketplace (e.g., USA). Leave empty for all NA.'
+        description: 'Specific marketplace (e.g., USA, UK, AU). Leave empty for all in region.'
         required: false
+      region:
+        description: 'Region to pull (NA, EU, FE). Leave empty for all regions.'
+        required: false
+        type: choice
+        options:
+          - ''
+          - 'NA'
+          - 'EU'
+          - 'FE'
       force:
         description: 'Force re-pull even if data exists'
         type: boolean
@@ -41,7 +50,11 @@ on:
 jobs:
   pull-sqp-data:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        region: ${{ github.event.inputs.region != '' && fromJSON(format('["{0}"]', github.event.inputs.region)) || fromJSON('["NA", "EU", "FE"]') }}
 
     steps:
       - name: Checkout repository
@@ -75,16 +88,18 @@ jobs:
 
           echo "period_type=$PERIOD_TYPE" >> $GITHUB_OUTPUT
 
-      - name: Pull SQP/SCP data
+      - name: Pull SQP/SCP data (${{ matrix.region }})
         env:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
           SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SP_REFRESH_TOKEN_EU: ${{ secrets.SP_REFRESH_TOKEN_EU }}
+          SP_REFRESH_TOKEN_FE: ${{ secrets.SP_REFRESH_TOKEN_FE }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
-          CMD="python scripts/pull_sqp.py --resume"
+          CMD="python scripts/pull_sqp.py --resume --region ${{ matrix.region }}"
 
           # Report type
           REPORT_TYPE="${{ github.event.inputs.report_type }}"
@@ -117,8 +132,9 @@ jobs:
       - name: Post summary
         if: always()
         run: |
-          echo "## SQP/SCP Weekly Pull Results" >> $GITHUB_STEP_SUMMARY
+          echo "## SQP/SCP Weekly Pull Results (${{ matrix.region }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ matrix.region }}" >> $GITHUB_STEP_SUMMARY
           echo "**Period Type:** ${{ steps.schedule.outputs.period_type }}" >> $GITHUB_STEP_SUMMARY
           echo "**Report Type:** ${{ github.event.inputs.report_type || 'both' }}" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY

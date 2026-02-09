@@ -6,7 +6,9 @@ Backfills historical search performance data from ~Dec 2023 to present.
 
 Constraints:
 - ~110 weeks of weekly data available
-- 44 batches per period (32 USA + 11 CA + 1 MX) x 2 report types = 88 requests per period
+- NA: ~44 batches per period (32 USA + 11 CA) x 2 report types = ~88 requests per period
+- EU: ~20-40 batches per period (UK, DE, FR, IT, ES, UAE) x 2 report types
+- FE: ~2-6 batches per period (AU only) x 2 report types
 - At 1 request/min = ~88 minutes per period
 - Rate limit budget: ~186 available/day after daily pulls
 - Default: 2 periods per GitHub Actions run (~3 hours)
@@ -61,8 +63,13 @@ logger = logging.getLogger(__name__)
 # Default backfill start: Dec 2023 (SQP data generally available from here)
 DEFAULT_BACKFILL_START = date(2023, 12, 3)  # First Sunday in Dec 2023
 
-# North America marketplaces (MX excluded - Brand Analytics not available)
-NA_MARKETPLACES = ["USA", "CA"]
+# Marketplaces by region for Brand Analytics (SQP/SCP)
+# MX excluded (Brand Analytics not available)
+MARKETPLACES_BY_REGION = {
+    "NA": ["USA", "CA"],
+    "EU": ["UK", "DE", "FR", "IT", "ES", "UAE"],
+    "FE": ["AU"]
+}
 
 # Token refresh interval (30 minutes)
 TOKEN_REFRESH_INTERVAL = 30 * 60
@@ -125,7 +132,7 @@ def main():
     parser.add_argument(
         "--marketplace",
         type=str,
-        help="Specific marketplace code. Omit for all NA."
+        help="Specific marketplace code (e.g., USA, UK, AU). Omit for all in region."
     )
     parser.add_argument(
         "--region",
@@ -151,7 +158,7 @@ def main():
     else:
         report_types = [args.report_type]
 
-    marketplaces = [args.marketplace.upper()] if args.marketplace else NA_MARKETPLACES
+    marketplaces = [args.marketplace.upper()] if args.marketplace else MARKETPLACES_BY_REGION.get(args.region.upper(), ["USA", "CA"])
 
     # Enumerate all periods
     if args.period_type == "WEEK":
@@ -211,8 +218,8 @@ def main():
         return
 
     # Get access token and create client
-    print("\nGetting access token...")
-    access_token = get_access_token()
+    print(f"\nGetting access token for region {args.region}...")
+    access_token = get_access_token(region=args.region)
     client = SPAPIClient(access_token, region=args.region)
     last_token_refresh = time.time()
 
@@ -228,8 +235,8 @@ def main():
             # Refresh token if needed
             elapsed = time.time() - last_token_refresh
             if elapsed > TOKEN_REFRESH_INTERVAL:
-                print("Refreshing access token...")
-                access_token = get_access_token()
+                print(f"Refreshing access token for region {args.region}...")
+                access_token = get_access_token(region=args.region)
                 client = SPAPIClient(access_token, region=args.region)
                 last_token_refresh = time.time()
 

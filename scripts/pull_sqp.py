@@ -63,8 +63,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# North America marketplaces (MX excluded - Brand Analytics not available)
-NA_MARKETPLACES = ["USA", "CA"]
+# Marketplaces by region for Brand Analytics (SQP/SCP)
+# MX excluded (Brand Analytics not available)
+MARKETPLACES_BY_REGION = {
+    "NA": ["USA", "CA"],
+    "EU": ["UK", "DE", "FR", "IT", "ES", "UAE"],
+    "FE": ["AU"]
+}
 
 
 def pull_for_marketplace(
@@ -311,7 +316,7 @@ def main():
     parser.add_argument(
         "--marketplace",
         type=str,
-        help="Specific marketplace code (e.g., USA). Omit for all NA."
+        help="Specific marketplace code (e.g., USA, UK, AU). Omit for all in region."
     )
     parser.add_argument(
         "--region",
@@ -347,7 +352,7 @@ def main():
     if args.marketplace:
         marketplaces = [args.marketplace.upper()]
     else:
-        marketplaces = NA_MARKETPLACES
+        marketplaces = MARKETPLACES_BY_REGION.get(args.region.upper(), ["USA", "CA"])
 
     print(f"\nSP-API SQP/SCP Pull Script")
     print(f"Period: {args.period_type} {period_start} to {period_end}")
@@ -359,7 +364,7 @@ def main():
     # Get access token and create client
     if not args.dry_run:
         print("Getting access token...")
-        access_token = get_access_token()
+        access_token = get_access_token(region=args.region)
         client = SPAPIClient(access_token, region=args.region)
     else:
         client = None
