@@ -151,9 +151,12 @@ def get_all_inventory_summaries(
         summaries = payload.get("inventorySummaries", [])
         all_summaries.extend(summaries)
 
-        # Check for next page - nextToken is at payload level, NOT inside pagination
-        next_token = payload.get("nextToken")
-
+        # Check for next page - nextToken is inside the top-level "pagination" object
+        # Per Amazon docs: operation is done only when "pagination" is NOT in the response
+        pagination = result.get("pagination")
+        if pagination is None:
+            break
+        next_token = pagination.get("nextToken")
         if not next_token:
             break
 
