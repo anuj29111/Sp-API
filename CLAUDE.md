@@ -133,7 +133,7 @@ POP System (Advertising API) ─────────────────
 | Report Type | SP-API Report | Script | Status | Records |
 |-------------|---------------|--------|--------|---------|
 | **Settlement Reports** | `GET_V2_SETTLEMENT_REPORT_DATA_FLAT_FILE_V2` | `pull_settlements.py` / `backfill_settlements.py` | ✅ **Working** | 536,744 tx, 21 summaries (NA) + EU/FE landing |
-| **Reimbursements** | `GET_FBA_REIMBURSEMENTS_DATA` | `pull_reimbursements.py` | ⚠️ **Partial** (API FATAL on USA/CA) | 914 (MX only) |
+| **Reimbursements** | `GET_FBA_REIMBURSEMENTS_DATA` | `pull_reimbursements.py` | ✅ **Working** (per-region pull, currency resolution) | 1,400 (NA+EU+AU) |
 | **FBA Fee Estimates** | `GET_FBA_ESTIMATED_FBA_FEES_TXT_DATA` | `pull_fba_fees.py` | ✅ **Working** (NA + EU/FE) | 1,560+ |
 | **Storage Fees** | `GET_FBA_STORAGE_FEE_CHARGES_DATA` | `pull_storage_fees.py` | ✅ Working (Phase 2) | 14,227 |
 
@@ -188,7 +188,7 @@ POP System (Advertising API) ─────────────────
 │   ├── daily-pull.yml             # 4x/day - Sales & Traffic + view refresh
 │   ├── orders-daily.yml           # 6x/day - Near-real-time orders (~30min delay)
 │   ├── inventory-daily.yml        # 3 AM UTC - FBA + AWD + monthly snapshots
-│   ├── storage-fees-monthly.yml   # 5th of month - Storage Fees
+│   ├── storage-fees-monthly.yml   # 5th, 10th, 15th of month - Storage Fees (retry for late availability)
 │   ├── historical-backfill.yml    # 4x/day - Auto backfill until complete
 │   ├── sqp-weekly.yml             # Tuesdays + 4th of month - SQP/SCP pull
 │   ├── sqp-backfill.yml           # 3x/day - SQP historical backfill
@@ -337,9 +337,9 @@ gh workflow run historical-backfill.yml -f region=EU              # EU only
 
 | Workflow | Schedule | Notes |
 |----------|----------|-------|
-| `storage-fees-monthly.yml` | 5th of month | Storage fees |
+| `storage-fees-monthly.yml` | 5th, 10th, 15th of month | Storage fees (retry for late availability) |
 | `settlement-backfill.yml` | Manual | Backfill settlements to Jan 2024 |
-| `reimbursements-weekly.yml` | Mondays 6 AM UTC | USA/CA FATAL, MX working |
+| `reimbursements-weekly.yml` | Mondays 6 AM UTC | Per-region pull with currency resolution |
 | `financial-daily.yml` | Daily 5 AM UTC | FBA fee estimates |
 
 ---
@@ -468,7 +468,7 @@ All systems fully automated. All workflows run for **4 regions (NA, EU, FE, UAE)
 | **SQP/SCP Weekly Pull** | Tuesdays 4 AM UTC | NA, EU, FE, UAE | ✅ Running |
 | **SQP/SCP Backfill** | 3x/day (1, 9, 17 UTC) | NA, EU, FE, UAE | 🔄 Running |
 | **Settlement Reports** | Tuesdays 7 AM UTC | NA, EU, FE, UAE | ✅ Running |
-| **Reimbursements** | Mondays 6 AM UTC | NA, EU, FE, UAE | ⚠️ USA/CA FATAL |
+| **Reimbursements** | Mondays 6 AM UTC | NA, EU, FE, UAE | ✅ Working (per-region, currency resolution) |
 | **FBA Fee Estimates** | Daily 5 AM UTC | NA, EU, FE, UAE | ✅ Working |
 
 ---
@@ -481,7 +481,8 @@ All systems fully automated. All workflows run for **4 regions (NA, EU, FE, UAE)
 - **Settlement 90-Day Lookback**: `getReports` API has max 90-day lookback. Current coverage: Oct 2025 → present.
 - **Settlement Uniqueness**: No row-level unique ID — system uses MD5 hash of 11 key fields.
 - **FBA Fee Estimates**: Only CURRENT fees, not historical. Settlements are source of truth for historical.
-- **Amazon API FATAL**: USA/CA Reimbursements and Inventory Age return FATAL. Cron retries automatically.
+- **Amazon API FATAL**: Inventory Age returns FATAL. Cron retries automatically.
+- **Reimbursements Region Behavior**: Amazon returns ALL reimbursements for the entire region regardless of marketplace_id. Script pulls ONCE per region, resolves per-row marketplace from currency-unit (USD→USA, CAD→CA, GBP→UK, EUR→DE, AUD→AU). EUR cannot distinguish DE/FR/IT/ES — defaults to DE.
 - **UAE Separate Account**: UAE has a different Amazon seller account with its own refresh token (`SP_REFRESH_TOKEN_UAE`). UAE is treated as a 4th region in workflow matrices, using the EU API endpoint but its own auth credentials.
 - **EU Inventory (Pan-European FBA)**: FBA Inventory API v1 only returns physically local FC stock. For EU, we use `GET_FBA_MYI_UNSUPPRESSED_INVENTORY_DATA` report instead, which includes `afn-fulfillable-quantity-local` + `afn-fulfillable-quantity-remote` columns. Chalkola uses MCI (Multi-Country Inventory) so most EU stock is local per marketplace (remote = 0).
 - **~~FBA Inventory Pagination~~** *(FIXED Feb 9, 2026)*: `nextToken` was read from wrong path. Fixed in `fba_inventory_api.py`.
@@ -580,7 +581,7 @@ SUPABASE DATABASE
 ### Monitoring: Automated Systems
 - **Historical Backfill (EU/FE)** — Just started running for EU/FE. Will fill 2 years of data.
 - **SQP/SCP Backfill** — Running 3x/day. NA estimated ~19 days from Feb 8. EU/FE just started.
-- **Reimbursements** — USA/CA return FATAL (Amazon API issue). MX working.
+- **Reimbursements** — ✅ Fixed (Session 19). Per-region pull with currency-based marketplace resolution. Duplicates cleaned.
 - **Settlement 90-day lookback** — API max 90-day window. Options: manual Seller Central download or accept rolling window.
 
 ### Future: Phase 4 — Product Master Data & COGS
@@ -610,4 +611,4 @@ SUPABASE DATABASE
 
 ---
 
-*Last Updated: February 9, 2026 (Session 18 — Google Sheets integration expanded to all 10 marketplaces. Added refresh functions for UK, DE, FR, IT, ES, AU, UAE. Menu organized by region (NA/EU/FE/UAE). Inventory sheets now include EU EFN local/remote columns. Formula examples updated.)*
+*Last Updated: February 10, 2026 (Session 19 — Fixed reimbursements duplication bug: now pulls ONCE per region, resolves marketplace per-row from currency-unit. Cleaned duplicate DB rows. Storage fees workflow updated to retry on 5th/10th/15th for late Amazon availability. Triggered Jan 2026 storage fees pull for all 4 regions.)*
