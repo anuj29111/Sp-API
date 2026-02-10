@@ -31,6 +31,7 @@ POP System (Advertising API) ─────────────────
 | 1.5 Near-Real-Time Orders | ✅ Complete | 6x/day, ~30min delay, S&T overwrites when available |
 | 2. Inventory | ✅ Complete | FBA (API for NA, report for EU/FE), AWD (NA only), Storage Fees |
 | 2.5 SQP/SCP | ✅ Complete | Weekly/monthly search performance, backfill running |
+| 2.6 Search Terms (TST) | ✅ Complete | Top 3 competitor ASINs per keyword, weekly auto-pull |
 | 3. Financial Reports | ✅ Complete | Settlements, reimbursements, FBA fee estimates |
 | 4. Product Master / COGS | ⏸️ Pending | Need SKU→ASIN→COGS mapping |
 | 5. CM1/CM2 Engine | ⏸️ Pending | Combine settlements + COGS + ad spend |
@@ -64,12 +65,13 @@ POP System (Advertising API) ─────────────────
 | `sp_awd_inventory` | Daily AWD inventory (NA only) |
 | `sp_storage_fees` | Monthly storage fees by FNSKU+FC |
 | `sp_sqp_data` / `sp_scp_data` | Search query/catalog performance (weekly/monthly) |
+| `sp_search_terms_data` | Top 3 clicked ASINs per search term (competitive intelligence) |
 | `sp_settlement_transactions` | Per-order fees — PRIMARY source for CM2 |
 | `sp_settlement_summaries` | One row per settlement period |
 | `sp_reimbursements` | Per-SKU reimbursement records |
 | `sp_fba_fee_estimates` | Current fee estimates per ASIN (not historical) |
 
-Pull tracking tables: `sp_api_pulls`, `sp_inventory_pulls`, `sp_sqp_pulls`, `sp_financial_pulls`
+Pull tracking tables: `sp_api_pulls`, `sp_inventory_pulls`, `sp_sqp_pulls`, `sp_financial_pulls`, `sp_search_terms_pulls`
 
 Materialized views: `sp_weekly_asin_data_mat`, `sp_monthly_asin_data_mat`, `sp_rolling_asin_metrics_mat` (with wrapper views for backwards compat)
 
@@ -85,6 +87,7 @@ Full schema details: `Documentation/database-schema.md`
 - **Reimbursements region behavior**: Amazon returns ALL reimbursements per region. Script pulls ONCE per region, resolves marketplace from currency (USD→USA, CAD→CA, GBP→UK, EUR→DE, AUD→AU). EUR cannot distinguish DE/FR/IT/ES — defaults to DE.
 - **EU Inventory**: FBA Inventory API v1 only returns local FC stock. EU uses report with EFN local/remote columns instead.
 - **SQP constraints**: No daily granularity (weekly finest), ~18 ASINs/batch, ~48hr delay, brand-registered only.
+- **Search Terms Report**: Bulk ~12M rows / ~2.3 GB. Stream-parsed with ijson (~165s). Only ~25% of SQP keywords match (small-volume terms absent). Runs Tue 6 AM UTC after SQP.
 - **GitHub Actions timeout**: 5.5hr limit per run. Backfills run 4x/day to work around this.
 
 ## GitHub Secrets

@@ -35,6 +35,13 @@ Supabase project: `chalkola-one-system` (yawaopfqkkvdqtsagmng)
 | `sp_sqp_pulls` | SQP/SCP pull tracking with batch-level resume | `batch_status` JSONB, completed/failed batches |
 | `sp_sqp_asin_errors` | ASINs that fail SQP pulls | Auto-suppressed after 3 failures |
 
+## Search Terms Tables (TST — Competitive Intelligence)
+
+| Table | Purpose | Key Fields |
+|-------|---------|------------|
+| `sp_search_terms_data` | Top 3 clicked ASINs per search term (marketplace-wide) | `search_term`, `search_frequency_rank`, `clicked_asin`, `click_share_rank`, `click_share`, `conversion_share`, `department_name` |
+| `sp_search_terms_pulls` | Pull tracking per marketplace per period | `sqp_keywords_count`, `matched_terms_count`, `total_rows`, `processing_time_ms` |
+
 ## Financial Tables
 
 | Table | Purpose | Unique On | Key Fields |
@@ -75,6 +82,13 @@ Supabase project: `chalkola-one-system` (yawaopfqkkvdqtsagmng)
 - SQP = per-ASIN, per-search-query funnel metrics (weekly/monthly)
 - SCP = per-ASIN aggregate search funnel + revenue + conversion rate
 - Constraints: No daily granularity, ~18 ASINs/batch, ~48hr delay, brand-registered only
+
+### Phase 2.6: Search Terms (TST) - COMPLETE
+- Brand Analytics Search Terms Report: top 3 clicked ASINs per search term across entire marketplace
+- Bulk report (~12M rows / ~2.3 GB) — stream-parsed with `ijson`, filtered against SQP keywords
+- Only ~25% of SQP terms match (small-volume terms absent from TST)
+- Weekly auto-pull: Tuesday 6 AM UTC (after SQP ensures fresh keywords)
+- Unique on: `(marketplace_id, search_term, period_start, period_type, clicked_asin)`
 
 ### Phase 3: Financial Reports - COMPLETE
 - Settlement Reports: PRIMARY for CM2 (actual fees per order)
