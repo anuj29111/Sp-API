@@ -251,11 +251,12 @@ def stream_and_filter_search_terms(
     response = requests.get(download_url, stream=True, timeout=600)
     response.raise_for_status()
 
-    # Set up the stream — handle gzip decompression transparently
+    # Set up the stream — handle gzip decompression
     if compression == "GZIP":
-        # urllib3's raw stream with decode_content handles gzip
-        response.raw.decode_content = True
-        stream = response.raw
+        # Wrap the raw stream in GzipFile for on-the-fly decompression
+        # Note: response.raw.decode_content doesn't always work with ijson,
+        # so we explicitly wrap in gzip.GzipFile
+        stream = gzip.GzipFile(fileobj=response.raw)
     else:
         stream = response.raw
 
