@@ -1114,3 +1114,219 @@ def upsert_fba_fee_estimates(
         total += len(chunk)
 
     return total
+
+
+# =============================================================================
+# Search Terms Report Functions (Brand Analytics - Top 3 ASINs per keyword)
+# =============================================================================
+
+def get_sqp_keywords_for_matching(
+    marketplace_code: str,
+    period_start: date = None,
+    period_end: date = None,
+    period_type: str = "WEEK"
+) -> set:
+    """
+    Get distinct search query terms from SQP data for filtering Search Terms Report.
+
+    If no data exists for the exact period, falls back to the most recent period.
+
+    Args:
+        marketplace_code: e.g., 'USA'
+        period_start: Start of period (optional — uses latest if None)
+        period_end: End of period (optional — uses latest if None)
+        period_type: 'WEEK', 'MONTH', or 'QUARTER'
+
+    Returns:
+        Set of lowercased search query strings
+    """
+    client = get_supabase_client()
+    marketplace_id = MARKETPLACE_UUIDS[marketplace_code]
+
+    if period_start and period_end:
+        # Try exact period first
+        result = client.table("sp_sqp_data").select("search_query").eq(
+            "marketplace_id", marketplace_id
+        ).eq(
+            "period_start", period_start.isoformat()
+        ).eq(
+            "period_end", period_end.isoformat()
+        ).eq(
+            "period_type", period_type
+        ).execute()
+
+        if result.data:
+            keywords = set(r["search_query"].lower() for r in result.data if r.get("search_query"))
+            print(f"  Loaded {len(keywords)} SQP keywords for {marketplace_code} ({period_start} to {period_end})")
+            return keywords
+
+    # Fallback: find most recent period
+    print(f"  No SQP data for exact period, finding most recent...")
+    result = client.table("sp_sqp_data").select(
+        "period_start,period_end"
+    ).eq(
+        "marketplace_id", marketplace_id
+    ).eq(
+        "period_type", period_type
+    ).order(
+        "period_start", desc=True
+    ).limit(1).execute()
+
+    if not result.data:
+        print(f"  WARNING: No SQP data found for {marketplace_code} period_type={period_type}")
+        return set()
+
+    latest_start = result.data[0]["period_start"]
+    latest_end = result.data[0]["period_end"]
+
+    result = client.table("sp_sqp_data").select("search_query").eq(
+        "marketplace_id", marketplace_id
+    ).eq(
+        "period_start", latest_start
+    ).eq(
+        "period_end", latest_end
+    ).eq(
+        "period_type", period_type
+    ).execute()
+
+    keywords = set(r["search_query"].lower() for r in result.data if r.get("search_query"))
+    print(f"  Loaded {len(keywords)} SQP keywords for {marketplace_code} (fallback: {latest_start} to {latest_end})")
+    return keywords
+
+
+def upsert_search_terms_data(rows: List[Dict], chunk_size: int = 200) -> int:
+    """
+    Batch upsert Search Terms Report data rows into sp_search_terms_data.
+
+    Search terms rows have ~12 columns so 200 rows is well within safe payload size.
+
+    Args:
+        rows: List of flat dicts ready for insert
+        chunk_size: Number of rows per upsert batch (default 200)
+
+    Returns:
+        Total number of rows upserted
+    """
+    if not rows:
+        return 0
+
+    client = get_supabase_client()
+    total = 0
+    num_chunks = (len(rows) + chunk_size - 1) // chunk_size
+
+    for i in range(0, len(rows), chunk_size):
+        chunk = rows[i:i + chunk_size]
+        chunk_num = i // chunk_size + 1
+        try:
+            client.table("sp_search_terms_data").upsert(
+                chunk,
+                on_conflict="marketplace_id,search_term,period_start,period_type,clicked_asin"
+            ).execute()
+            total += len(chunk)
+            if num_chunks > 1:
+                print(f"    [upsert chunk {chunk_num}/{num_chunks}: {len(chunk)} rows OK]", flush=True)
+        except Exception as e:
+            print(f"    [upsert chunk {chunk_num}/{num_chunks}: FAILED - {str(e)[:200]}]", flush=True)
+            raise
+
+    return total
+
+
+def create_search_terms_pull_record(
+    marketplace_code: str,
+    period_start: date,
+    period_end: date,
+    period_type: str = "WEEK",
+    sqp_keywords_count: int = 0
+) -> str:
+    """
+    Create or update an sp_search_terms_pulls tracking record.
+    Uses upsert for idempotency.
+
+    Returns:
+        Pull record ID (UUID string)
+    """
+    client = get_supabase_client()
+
+    result = client.table("sp_search_terms_pulls").upsert({
+        "marketplace_id": MARKETPLACE_UUIDS[marketplace_code],
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "period_type": period_type,
+        "status": "processing",
+        "started_at": datetime.utcnow().isoformat(),
+        "sqp_keywords_count": sqp_keywords_count,
+        "matched_terms_count": 0,
+        "total_rows": 0,
+        "report_id": None,
+        "report_document_id": None,
+        "error_message": None,
+        "processing_time_ms": None,
+        "completed_at": None
+    }, on_conflict="marketplace_id,period_start,period_end,period_type").execute()
+
+    return result.data[0]["id"]
+
+
+def update_search_terms_pull_status(
+    pull_id: str,
+    status: str = None,
+    report_id: str = None,
+    report_document_id: str = None,
+    matched_terms_count: int = None,
+    total_rows: int = None,
+    error_message: str = None,
+    processing_time_ms: int = None
+):
+    """Update an sp_search_terms_pulls record."""
+    client = get_supabase_client()
+
+    update_data = {"updated_at": datetime.utcnow().isoformat()}
+
+    if status is not None:
+        update_data["status"] = status
+    if report_id is not None:
+        update_data["report_id"] = report_id
+    if report_document_id is not None:
+        update_data["report_document_id"] = report_document_id
+    if matched_terms_count is not None:
+        update_data["matched_terms_count"] = matched_terms_count
+    if total_rows is not None:
+        update_data["total_rows"] = total_rows
+    if error_message is not None:
+        update_data["error_message"] = error_message
+    if processing_time_ms is not None:
+        update_data["processing_time_ms"] = processing_time_ms
+    if status in ["completed", "failed"]:
+        update_data["completed_at"] = datetime.utcnow().isoformat()
+
+    client.table("sp_search_terms_pulls").update(update_data).eq("id", pull_id).execute()
+
+
+def get_existing_search_terms_pull(
+    marketplace_code: str,
+    period_start: date,
+    period_end: date,
+    period_type: str = "WEEK"
+) -> Optional[Dict]:
+    """
+    Check if a Search Terms pull already exists for this marketplace/period.
+
+    Returns:
+        Pull record if exists, None otherwise
+    """
+    client = get_supabase_client()
+
+    result = client.table("sp_search_terms_pulls").select("*").eq(
+        "marketplace_id", MARKETPLACE_UUIDS[marketplace_code]
+    ).eq(
+        "period_start", period_start.isoformat()
+    ).eq(
+        "period_end", period_end.isoformat()
+    ).eq(
+        "period_type", period_type
+    ).execute()
+
+    if result.data:
+        return result.data[0]
+    return None

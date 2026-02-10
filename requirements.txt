@@ -8,3 +8,6 @@ supabase>=2.0.0
 
 # Environment variable loading (for local development)
 python-dotenv>=1.0.0
+
+# Streaming JSON parser (for large Brand Analytics reports)
+ijson>=3.2.0
