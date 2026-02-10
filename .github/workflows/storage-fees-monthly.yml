@@ -2,8 +2,10 @@ name: Monthly Storage Fees Pull
 
 on:
   schedule:
-    # Run on the 5th of each month at 4 AM UTC
-    - cron: '0 4 5 * *'
+    # Run on 5th, 10th, and 15th of each month at 4 AM UTC
+    # Amazon sometimes makes storage fee data available late (7th-8th)
+    # Script defaults to previous month, so retries are safe (upsert)
+    - cron: '0 4 5,10,15 * *'
   workflow_dispatch:
     inputs:
       month:
