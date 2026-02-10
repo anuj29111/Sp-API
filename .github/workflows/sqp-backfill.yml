@@ -1,25 +1,25 @@
 name: SQP Historical Backfill
 
 on:
-  # Run 3x/day, spaced 8hrs apart, avoiding other workflow windows
-  # Daily pulls: 2,8,14,20 | Backfill: 0,6,12,18 | Orders: 0,4,8,12,16,20
+  # Run 4x/day for faster backfill (SQP-first strategy)
+  # With 5 periods/run × 4 runs = 20 periods/day → ~6 days for full SQP backfill
   schedule:
-    - cron: '0 1,9,17 * * *'
+    - cron: '0 1,7,13,19 * * *'
 
   workflow_dispatch:
     inputs:
       max_periods:
         description: 'Max periods to process per run'
         required: false
-        default: '2'
+        default: '5'
       report_type:
-        description: 'Report type'
+        description: 'Report type (SQP first, SCP after SQP is done)'
         type: choice
         options:
-          - 'both'
           - 'SQP'
           - 'SCP'
-        default: 'both'
+          - 'both'
+        default: 'SQP'
       period_type:
         description: 'Period granularity'
         type: choice
@@ -81,11 +81,11 @@ jobs:
           CMD="python scripts/backfill_sqp.py --region ${{ matrix.region }}"
 
           MAX_PERIODS="${{ github.event.inputs.max_periods }}"
-          MAX_PERIODS="${MAX_PERIODS:-2}"
+          MAX_PERIODS="${MAX_PERIODS:-5}"
           CMD="$CMD --max-periods $MAX_PERIODS"
 
           REPORT_TYPE="${{ github.event.inputs.report_type }}"
-          if [ -n "$REPORT_TYPE" ] && [ "$REPORT_TYPE" != "both" ]; then
+          if [ -n "$REPORT_TYPE" ]; then
             CMD="$CMD --report-type $REPORT_TYPE"
           fi
 
@@ -111,6 +111,6 @@ jobs:
           echo "## SQP Backfill Results (${{ matrix.region }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** ${{ matrix.region }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Max Periods:** ${{ github.event.inputs.max_periods || '2' }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Report Type:** ${{ github.event.inputs.report_type || 'both' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Max Periods:** ${{ github.event.inputs.max_periods || '5' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Report Type:** ${{ github.event.inputs.report_type || 'SQP' }}" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY

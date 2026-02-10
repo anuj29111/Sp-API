@@ -4,25 +4,29 @@ SP-API SQP/SCP Historical Backfill Script
 
 Backfills historical search performance data from ~Dec 2023 to present.
 
-Constraints:
-- ~110 weeks of weekly data available
-- NA: ~44 batches per period (32 USA + 11 CA) x 2 report types = ~88 requests per period
-- EU: ~20-40 batches per period (UK, DE, FR, IT, ES, UAE) x 2 report types
-- FE: ~2-6 batches per period (AU only) x 2 report types
-- At 1 request/min = ~88 minutes per period
-- Rate limit budget: ~186 available/day after daily pulls
-- Default: 2 periods per GitHub Actions run (~3 hours)
-
 Strategy:
+- SQP first, then SCP later (halves the request count)
+- Priority marketplaces first: USA, CA, UK, DE, UAE, AU, FR
+- IT and ES deferred until priority countries complete
 - Process latest periods first (most valuable)
 - Skip existing completed pulls
 - Resume interrupted backfills at batch level
 
+Batch counts per marketplace (SQP only):
+- USA: 11 batches (~11 min/period)
+- CA: 9 batches (~9 min/period)
+- UK: 8 batches (~8 min/period)
+- DE/FR: 7 batches (~7 min/period)
+- UAE: 4 batches (~4 min/period)
+- AU: 2 batches (~2 min/period)
+
+With 5 periods/run, 4 runs/day = 20 periods/day → ~6 days for full backfill.
+
 Usage:
-    python backfill_sqp.py                              # Backfill latest-first, 2 periods/run
-    python backfill_sqp.py --max-periods 3              # More periods per run
+    python backfill_sqp.py                              # Backfill SQP, 5 periods/run
+    python backfill_sqp.py --max-periods 3              # Fewer periods per run
+    python backfill_sqp.py --report-type both            # SQP + SCP
     python backfill_sqp.py --start-date 2024-01-01      # From specific date
-    python backfill_sqp.py --report-type SQP            # SQP only
     python backfill_sqp.py --period-type MONTH           # Monthly backfill
     python backfill_sqp.py --marketplace USA             # Single marketplace
     python backfill_sqp.py --dry-run                    # Show plan
@@ -65,9 +69,11 @@ DEFAULT_BACKFILL_START = date(2023, 12, 3)  # First Sunday in Dec 2023
 
 # Marketplaces by region for Brand Analytics (SQP/SCP)
 # MX excluded (Brand Analytics not available)
+# Priority order: USA, CA, UK, DE, UAE, AU, FR first
+# IT and ES deferred until priority countries are fully backfilled
 MARKETPLACES_BY_REGION = {
     "NA": ["USA", "CA"],
-    "EU": ["UK", "DE", "FR", "IT", "ES"],
+    "EU": ["UK", "DE", "FR"],       # IT, ES deferred — add back once UK/DE/FR done
     "FE": ["AU"],
     "UAE": ["UAE"]
 }
@@ -108,8 +114,8 @@ def main():
     parser.add_argument(
         "--max-periods",
         type=int,
-        default=2,
-        help="Max periods to process per run (default: 2)"
+        default=5,
+        help="Max periods to process per run (default: 5)"
     )
     parser.add_argument(
         "--start-date",
@@ -120,8 +126,8 @@ def main():
         "--report-type",
         type=str,
         choices=["SQP", "SCP", "both"],
-        default="both",
-        help="Report type to backfill (default: both)"
+        default="SQP",
+        help="Report type to backfill (default: SQP — do SQP first, SCP later)"
     )
     parser.add_argument(
         "--period-type",
