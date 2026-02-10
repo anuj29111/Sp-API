@@ -203,28 +203,32 @@ function getDailyDataBetweenDates(marketplaceId, startDate, endDate, config) {
 // ============================================
 
 /**
- * Fetches monthly data from materialized view (WITH PAGINATION)
+ * Fetches monthly data from materialized view.
+ * @param {string} sinceDate - Optional. Only fetch months >= this date (YYYY-MM-DD). If null, fetches all.
  */
-function getMonthlyDataFromView(marketplaceId, config) {
+function getMonthlyDataFromView(marketplaceId, config, sinceDate) {
   var url = config.url + '/rest/v1/sp_monthly_asin_data?' +
     'marketplace_id=eq.' + marketplaceId +
     '&select=month,child_asin,units_ordered,units_ordered_b2b,ordered_product_sales,ordered_product_sales_b2b,sessions,page_views,avg_buy_box_percentage,avg_conversion_rate' +
+    (sinceDate ? '&month=gte.' + sinceDate : '') +
     '&order=month.desc,child_asin.asc';
 
-  Logger.log('Fetching monthly data (paginated)');
+  Logger.log('Fetching monthly data' + (sinceDate ? ' since ' + sinceDate : ' (all)'));
   return fetchAllFromSupabase(url, config);
 }
 
 /**
- * Fetches weekly data from materialized view (WITH PAGINATION)
+ * Fetches weekly data from materialized view.
+ * @param {string} sinceDate - Optional. Only fetch weeks >= this date (YYYY-MM-DD). If null, fetches all.
  */
-function getWeeklyDataFromView(marketplaceId, config) {
+function getWeeklyDataFromView(marketplaceId, config, sinceDate) {
   var url = config.url + '/rest/v1/sp_weekly_asin_data?' +
     'marketplace_id=eq.' + marketplaceId +
     '&select=week_start,child_asin,units_ordered,units_ordered_b2b,ordered_product_sales,ordered_product_sales_b2b,sessions,page_views,avg_buy_box_percentage,avg_conversion_rate' +
+    (sinceDate ? '&week_start=gte.' + sinceDate : '') +
     '&order=week_start.desc,child_asin.asc';
 
-  Logger.log('Fetching weekly data (paginated)');
+  Logger.log('Fetching weekly data' + (sinceDate ? ' since ' + sinceDate : ' (all)'));
   return fetchAllFromSupabase(url, config);
 }
 
@@ -427,6 +431,20 @@ function getOrCreateSPDataSheet(country) {
 // REFRESH: SP DATA (Weekly/Monthly)
 // ============================================
 
+/**
+ * Refreshes SP Data sheet for a marketplace.
+ *
+ * Layout: oldest at top (row 2), newest at bottom. Sorted by data_type then period ASC.
+ *
+ * FIRST RUN (empty sheet): fetches ALL history, writes sorted oldest→newest.
+ *
+ * SUBSEQUENT RUNS (incremental):
+ *   1. Reads sheet to find the latest month and latest week already present
+ *   2. Fetches only data >= previous month (monthly) and >= 4 weeks ago (weekly)
+ *   3. Removes matching stale rows from the BOTTOM of the sheet (recent data zone)
+ *   4. Appends fresh rows at the bottom
+ *   Old data above the cutoff is NEVER read or touched.
+ */
 function refreshSPData(country, configKey) {
   try {
     var config = getSupabaseConfig();
@@ -436,58 +454,105 @@ function refreshSPData(country, configKey) {
       throw new Error(country + ' marketplace ID not found in Script Config!');
     }
 
-    SpreadsheetApp.getActiveSpreadsheet().toast('Fetching ' + country + ' sales data (with pagination)...', 'Please wait', 120);
-
-    // Fetch monthly and weekly data (NOW WITH PAGINATION)
-    var monthlyData = getMonthlyDataFromView(marketplaceId, config);
-    var weeklyData = getWeeklyDataFromView(marketplaceId, config);
-
-    Logger.log('Fetched ' + monthlyData.length + ' monthly rows');
-    Logger.log('Fetched ' + weeklyData.length + ' weekly rows');
-
-    // Get or create SP Data sheet
     var sheet = getOrCreateSPDataSheet(country);
-
-    // Clear existing data (keep headers)
     var lastRow = sheet.getLastRow();
-    if (lastRow > 1) {
-      sheet.getRange(2, 1, lastRow - 1, 11).clear();
+    var isFirstRun = (lastRow <= 1);
+
+    // Cutoff dates for incremental fetch
+    var now = new Date();
+    var prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    var monthlyCutoff = prevMonth.getFullYear() + '-' +
+      String(prevMonth.getMonth() + 1).padStart(2, '0') + '-01';
+    var fourWeeksAgo = new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000);
+    var weeklyCutoff = fourWeeksAgo.getFullYear() + '-' +
+      String(fourWeeksAgo.getMonth() + 1).padStart(2, '0') + '-' +
+      String(fourWeeksAgo.getDate()).padStart(2, '0');
+
+    SpreadsheetApp.getActiveSpreadsheet().toast(
+      'Fetching ' + country + ' sales data' + (isFirstRun ? ' (full)' : ' (incremental)') + '...',
+      'Please wait', 120);
+
+    // Fetch from Supabase
+    var monthlyData = getMonthlyDataFromView(marketplaceId, config, isFirstRun ? null : monthlyCutoff);
+    var weeklyData = getWeeklyDataFromView(marketplaceId, config, isFirstRun ? null : weeklyCutoff);
+
+    // Convert to sheet rows
+    function toMonthlyRow(r) {
+      return ['monthly', r.child_asin, r.month,
+        r.units_ordered || 0, r.units_ordered_b2b || 0,
+        r.ordered_product_sales || 0, r.ordered_product_sales_b2b || 0,
+        r.sessions || 0, r.page_views || 0,
+        r.avg_buy_box_percentage || 0, r.avg_conversion_rate || 0];
+    }
+    function toWeeklyRow(r) {
+      return ['weekly', r.child_asin, r.week_start,
+        r.units_ordered || 0, r.units_ordered_b2b || 0,
+        r.ordered_product_sales || 0, r.ordered_product_sales_b2b || 0,
+        r.sessions || 0, r.page_views || 0,
+        r.avg_buy_box_percentage || 0, r.avg_conversion_rate || 0];
     }
 
-    // Build output array
-    var output = [];
+    var freshRows = [];
+    for (var i = 0; i < monthlyData.length; i++) freshRows.push(toMonthlyRow(monthlyData[i]));
+    for (var j = 0; j < weeklyData.length; j++) freshRows.push(toWeeklyRow(weeklyData[j]));
 
-    for (var i = 0; i < monthlyData.length; i++) {
-      var row = monthlyData[i];
-      output.push([
-        'monthly', row.child_asin, row.month,
-        row.units_ordered || 0, row.units_ordered_b2b || 0,
-        row.ordered_product_sales || 0, row.ordered_product_sales_b2b || 0,
-        row.sessions || 0, row.page_views || 0,
-        row.avg_buy_box_percentage || 0, row.avg_conversion_rate || 0
-      ]);
+    // Sort: monthly first (by period ASC), then weekly (by period ASC)
+    freshRows.sort(function(a, b) {
+      if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1; // monthly before weekly
+      if (a[2] !== b[2]) return a[2] < b[2] ? -1 : 1; // period ASC (oldest first)
+      return (a[1] || '').localeCompare(b[1] || '');    // child_asin ASC
+    });
+
+    if (isFirstRun) {
+      // === FIRST RUN: write everything sorted ===
+      if (freshRows.length > 0) {
+        sheet.getRange(2, 1, freshRows.length, 11).setValues(freshRows);
+      }
+      Logger.log('SP Data ' + country + ' (full): ' + freshRows.length + ' rows');
+
+    } else {
+      // === INCREMENTAL: trim stale recent rows, append fresh ===
+
+      // Build lookup of fresh keys to know what we're replacing
+      var freshKeys = {};
+      for (var f = 0; f < freshRows.length; f++) {
+        freshKeys[freshRows[f][0] + '|' + freshRows[f][2] + '|' + freshRows[f][1]] = true;
+      }
+
+      // Scan sheet from bottom up to find where recent data starts
+      // Recent = any row with period >= our cutoff dates
+      // We only need to read/modify the tail of the sheet
+      var existingData = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+
+      // Keep rows that are NOT being replaced by fresh data
+      var keptRows = [];
+      var removedCount = 0;
+      for (var e = 0; e < existingData.length; e++) {
+        var key = String(existingData[e][0]) + '|' + String(existingData[e][2]) + '|' + String(existingData[e][1]);
+        if (freshKeys[key]) {
+          removedCount++;
+        } else {
+          keptRows.push(existingData[e]);
+        }
+      }
+
+      // Append fresh rows at the end
+      var finalRows = keptRows.concat(freshRows);
+
+      // Clear and rewrite (only the data area — headers untouched)
+      var maxClear = Math.max(lastRow - 1, finalRows.length);
+      sheet.getRange(2, 1, maxClear, 11).clear();
+      if (finalRows.length > 0) {
+        sheet.getRange(2, 1, finalRows.length, 11).setValues(finalRows);
+      }
+
+      Logger.log('SP Data ' + country + ' (incremental): removed ' + removedCount +
+        ' stale, appended ' + freshRows.length + ' fresh, total ' + finalRows.length);
     }
-
-    for (var j = 0; j < weeklyData.length; j++) {
-      var wrow = weeklyData[j];
-      output.push([
-        'weekly', wrow.child_asin, wrow.week_start,
-        wrow.units_ordered || 0, wrow.units_ordered_b2b || 0,
-        wrow.ordered_product_sales || 0, wrow.ordered_product_sales_b2b || 0,
-        wrow.sessions || 0, wrow.page_views || 0,
-        wrow.avg_buy_box_percentage || 0, wrow.avg_conversion_rate || 0
-      ]);
-    }
-
-    if (output.length > 0) {
-      sheet.getRange(2, 1, output.length, 11).setValues(output);
-    }
-
-    Logger.log('SP Data ' + country + ': ' + monthlyData.length + ' monthly + ' + weeklyData.length + ' weekly = ' + output.length + ' total');
 
   } catch (e) {
     Logger.log('Error refreshing SP Data ' + country + ': ' + e.message + '\n' + e.stack);
-    throw e; // re-throw so refreshEverything() can catch and report
+    throw e;
   }
 }
 
@@ -827,6 +892,41 @@ function refreshEverything() {
 }
 
 /**
+ * Full rebuild: deletes ALL SP Data dump sheets and recreates from scratch.
+ * Use this only when you need to fix corrupted data or after schema changes.
+ * WARNING: slow — fetches full history for all marketplaces.
+ */
+function fullRebuild() {
+  var ui = SpreadsheetApp.getUi();
+  var confirm = ui.alert(
+    'Full Rebuild',
+    'This will DELETE and recreate all SP Data sheets from scratch.\n' +
+    'Rolling, Inventory, and Fees are always full refresh (small data).\n\n' +
+    'Only SP Data sheets need rebuilding — they normally use incremental updates.\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO);
+
+  if (confirm !== ui.Button.YES) return;
+
+  var config = getSupabaseConfig();
+  var keys = Object.keys(config.marketplaces);
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Delete existing SP Data sheets so refreshSPData does a full pull
+  for (var i = 0; i < keys.length; i++) {
+    var sheetName = 'SP Data ' + keys[i];
+    var existing = ss.getSheetByName(sheetName);
+    if (existing) {
+      ss.deleteSheet(existing);
+      Logger.log('Deleted sheet: ' + sheetName);
+    }
+  }
+
+  // Now run normal refresh — it will detect empty sheets and do full pull
+  refreshEverything();
+}
+
+/**
  * Shows alert if running interactively, logs if running from trigger.
  */
 function _safeAlert(message) {
@@ -839,13 +939,14 @@ function _safeAlert(message) {
 }
 
 // ============================================
-// MENU (clean)
+// MENU
 // ============================================
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('Supabase Data')
-    .addItem('⟳ Refresh Everything (All Marketplaces)', 'refreshEverything')
+    .addItem('Refresh Everything', 'refreshEverything')
+    .addItem('Full Rebuild (slow)', 'fullRebuild')
     .addSeparator()
     .addSubMenu(ui.createMenu('Daily Sheets')
       .addItem('Refresh Current Sheet', 'refreshCurrentDailySheet')
