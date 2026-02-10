@@ -1,0 +1,105 @@
+name: SQP Monthly Backfill
+
+on:
+  # Run 2x/day — monthly has ~25 periods (Dec 2023 to present)
+  # At 5 periods/run × 2 runs/day × 4 regions = ~4 days for full monthly backfill
+  schedule:
+    - cron: '0 3,15 * * *'
+
+  workflow_dispatch:
+    inputs:
+      max_periods:
+        description: 'Max periods to process per run'
+        required: false
+        default: '5'
+      report_type:
+        description: 'Report type (SQP first, SCP after SQP is done)'
+        type: choice
+        options:
+          - 'SQP'
+          - 'SCP'
+          - 'both'
+        default: 'SQP'
+      marketplace:
+        description: 'Specific marketplace (e.g., USA, UK, AU)'
+        required: false
+      start_date:
+        description: 'Backfill start date (YYYY-MM-DD)'
+        required: false
+      region:
+        description: 'Region to pull (NA, EU, FE). Leave empty for all regions.'
+        required: false
+        type: choice
+        options:
+          - ''
+          - 'NA'
+          - 'EU'
+          - 'FE'
+          - 'UAE'
+
+jobs:
+  sqp-monthly-backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        region: ${{ github.event.inputs.region != '' && fromJSON(format('["{0}"]', github.event.inputs.region)) || fromJSON('["NA", "EU", "FE", "UAE"]') }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run SQP monthly backfill (${{ matrix.region }})
+        env:
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+          SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SP_REFRESH_TOKEN_EU: ${{ secrets.SP_REFRESH_TOKEN_EU }}
+          SP_REFRESH_TOKEN_FE: ${{ secrets.SP_REFRESH_TOKEN_FE }}
+          SP_REFRESH_TOKEN_UAE: ${{ secrets.SP_REFRESH_TOKEN_UAE }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          CMD="python scripts/backfill_sqp.py --region ${{ matrix.region }} --period-type MONTH"
+
+          MAX_PERIODS="${{ github.event.inputs.max_periods }}"
+          MAX_PERIODS="${MAX_PERIODS:-5}"
+          CMD="$CMD --max-periods $MAX_PERIODS"
+
+          REPORT_TYPE="${{ github.event.inputs.report_type }}"
+          if [ -n "$REPORT_TYPE" ]; then
+            CMD="$CMD --report-type $REPORT_TYPE"
+          fi
+
+          if [ -n "${{ github.event.inputs.marketplace }}" ]; then
+            CMD="$CMD --marketplace ${{ github.event.inputs.marketplace }}"
+          fi
+
+          if [ -n "${{ github.event.inputs.start_date }}" ]; then
+            CMD="$CMD --start-date ${{ github.event.inputs.start_date }}"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
+
+      - name: Post summary
+        if: always()
+        run: |
+          echo "## SQP Monthly Backfill Results (${{ matrix.region }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ matrix.region }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Period Type:** MONTH" >> $GITHUB_STEP_SUMMARY
+          echo "**Max Periods:** ${{ github.event.inputs.max_periods || '5' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Report Type:** ${{ github.event.inputs.report_type || 'SQP' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
