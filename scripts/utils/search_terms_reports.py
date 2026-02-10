@@ -20,6 +20,7 @@ import json
 import time
 import logging
 import requests
+from decimal import Decimal
 from io import BytesIO
 from typing import Dict, List, Optional, Any, Tuple, Set, Callable
 from datetime import date
@@ -194,6 +195,21 @@ def transform_search_term_row(
     Returns:
         Flat dict ready for Supabase upsert
     """
+    # ijson returns Decimal objects for numbers — convert to float/int for JSON serialization
+    def _num(val):
+        if val is None:
+            return None
+        if isinstance(val, Decimal):
+            return float(val)
+        return val
+
+    def _int(val):
+        if val is None:
+            return None
+        if isinstance(val, Decimal):
+            return int(val)
+        return int(val) if val is not None else None
+
     return {
         "marketplace_id": marketplace_id,
         "search_term": item.get("searchTerm", "").strip(),
@@ -201,11 +217,11 @@ def transform_search_term_row(
         "period_end": period_end.isoformat(),
         "period_type": period_type,
         "department_name": item.get("departmentName"),
-        "search_frequency_rank": item.get("searchFrequencyRank"),
+        "search_frequency_rank": _int(item.get("searchFrequencyRank")),
         "clicked_asin": item.get("clickedAsin", ""),
-        "click_share_rank": item.get("clickShareRank"),
-        "click_share": item.get("clickShare"),
-        "conversion_share": item.get("conversionShare"),
+        "click_share_rank": _int(item.get("clickShareRank")),
+        "click_share": _num(item.get("clickShare")),
+        "conversion_share": _num(item.get("conversionShare")),
     }
 
 
