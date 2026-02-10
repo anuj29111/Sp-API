@@ -834,96 +834,232 @@ function refreshFeesData(country, configKey) {
 }
 
 // ============================================
-// MASTER REFRESH — All Marketplaces, All Data
+// TRIGGER-SAFE PER-COUNTRY FUNCTIONS
 // ============================================
-// Reads ALL marketplaces from Script Config and refreshes everything.
-// This is the ONLY function you need. Also works with time-based triggers.
+// Each function refreshes ONE data type for ONE country.
+// Google Apps Script 6-min limit means we CANNOT do everything in one run.
 //
-// Data types pulled per marketplace:
-//   1. SP Data (weekly/monthly sales + traffic)
-//   2. SP Rolling (7/14/30/60 day metrics)
-//   3. SP Inventory (FBA + AWD)
-//   4. SP Fees (estimates + settlement + storage)
+// Naming: trigger_{COUNTRY}_{TYPE}
+//   TYPE: sales, rolling, inventory, fees
+//
+// Set up time-based triggers on these (staggered 3-5 min apart).
+// Use "Setup Triggers" from menu to auto-create all of them.
+
+// --- US ---
+function trigger_US_sales()     { refreshSPData('US', 'US'); }
+function trigger_US_rolling()   { refreshRollingData('US', 'US'); }
+function trigger_US_inventory() { refreshInventoryData('US', 'US'); }
+function trigger_US_fees()      { refreshFeesData('US', 'US'); }
+
+// --- CA ---
+function trigger_CA_sales()     { refreshSPData('CA', 'CA'); }
+function trigger_CA_rolling()   { refreshRollingData('CA', 'CA'); }
+function trigger_CA_inventory() { refreshInventoryData('CA', 'CA'); }
+function trigger_CA_fees()      { refreshFeesData('CA', 'CA'); }
+
+// --- MX ---
+function trigger_MX_sales()     { refreshSPData('MX', 'MX'); }
+function trigger_MX_rolling()   { refreshRollingData('MX', 'MX'); }
+function trigger_MX_inventory() { refreshInventoryData('MX', 'MX'); }
+function trigger_MX_fees()      { refreshFeesData('MX', 'MX'); }
+
+// --- UK ---
+function trigger_UK_sales()     { refreshSPData('UK', 'UK'); }
+function trigger_UK_rolling()   { refreshRollingData('UK', 'UK'); }
+function trigger_UK_inventory() { refreshInventoryData('UK', 'UK'); }
+function trigger_UK_fees()      { refreshFeesData('UK', 'UK'); }
+
+// --- DE ---
+function trigger_DE_sales()     { refreshSPData('DE', 'DE'); }
+function trigger_DE_rolling()   { refreshRollingData('DE', 'DE'); }
+function trigger_DE_inventory() { refreshInventoryData('DE', 'DE'); }
+function trigger_DE_fees()      { refreshFeesData('DE', 'DE'); }
+
+// --- FR ---
+function trigger_FR_sales()     { refreshSPData('FR', 'FR'); }
+function trigger_FR_rolling()   { refreshRollingData('FR', 'FR'); }
+function trigger_FR_inventory() { refreshInventoryData('FR', 'FR'); }
+function trigger_FR_fees()      { refreshFeesData('FR', 'FR'); }
+
+// --- IT ---
+function trigger_IT_sales()     { refreshSPData('IT', 'IT'); }
+function trigger_IT_rolling()   { refreshRollingData('IT', 'IT'); }
+function trigger_IT_inventory() { refreshInventoryData('IT', 'IT'); }
+function trigger_IT_fees()      { refreshFeesData('IT', 'IT'); }
+
+// --- ES ---
+function trigger_ES_sales()     { refreshSPData('ES', 'ES'); }
+function trigger_ES_rolling()   { refreshRollingData('ES', 'ES'); }
+function trigger_ES_inventory() { refreshInventoryData('ES', 'ES'); }
+function trigger_ES_fees()      { refreshFeesData('ES', 'ES'); }
+
+// --- AU ---
+function trigger_AU_sales()     { refreshSPData('AU', 'AU'); }
+function trigger_AU_rolling()   { refreshRollingData('AU', 'AU'); }
+function trigger_AU_inventory() { refreshInventoryData('AU', 'AU'); }
+function trigger_AU_fees()      { refreshFeesData('AU', 'AU'); }
+
+// --- UAE ---
+function trigger_UAE_sales()     { refreshSPData('UAE', 'UAE'); }
+function trigger_UAE_rolling()   { refreshRollingData('UAE', 'UAE'); }
+function trigger_UAE_inventory() { refreshInventoryData('UAE', 'UAE'); }
+function trigger_UAE_fees()      { refreshFeesData('UAE', 'UAE'); }
+
+// ============================================
+// AUTO-SETUP TRIGGERS
+// ============================================
+// Creates time-based triggers for all countries, staggered 3 min apart.
+// Each country gets 4 triggers (sales, rolling, inventory, fees) at the same time.
+// Run once from menu: Supabase Data → Setup Daily Triggers
+//
+// Schedule (default 6 AM start):
+//   6:00 - US | 6:03 - CA | 6:06 - MX | 6:09 - UK | 6:12 - DE
+//   6:15 - FR | 6:18 - IT | 6:21 - ES | 6:24 - AU | 6:27 - UAE
 
 /**
- * Refreshes ALL data for ALL configured marketplaces.
- * Safe to call from a time-based trigger (no UI alerts in trigger mode).
+ * Creates daily time-based triggers for all configured marketplaces.
+ * Deletes existing supabase triggers first to avoid duplicates.
  */
-function refreshEverything() {
-  var config = getSupabaseConfig();
-  var keys = Object.keys(config.marketplaces);
+function setupDailyTriggers() {
+  var ui = SpreadsheetApp.getUi();
 
-  if (keys.length === 0) {
-    _safeAlert('No marketplaces found in Script Config!');
+  // Get configured countries
+  var config = getSupabaseConfig();
+  var countries = Object.keys(config.marketplaces);
+
+  if (countries.length === 0) {
+    ui.alert('No marketplaces configured in Script Config!');
     return;
   }
 
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var results = [];
-  var errors = [];
-
-  ss.toast('Refreshing ALL data for ' + keys.length + ' marketplaces...', 'Please wait', 600);
-
-  for (var i = 0; i < keys.length; i++) {
-    var configKey = keys[i];
-    var country = configKey; // config key IS the country label (US, CA, UK, etc.)
-
-    ss.toast('(' + (i + 1) + '/' + keys.length + ') Refreshing ' + country + '...', 'Progress', 120);
-
-    try {
-      refreshSPData(country, configKey);
-      refreshRollingData(country, configKey);
-      refreshInventoryData(country, configKey);
-      refreshFeesData(country, configKey);
-      results.push(country + ' ✓');
-    } catch (e) {
-      Logger.log('Error refreshing ' + country + ': ' + e.message);
-      errors.push(country + ': ' + e.message);
-      results.push(country + ' ✗');
-    }
-  }
-
-  var summary = 'Refresh complete!\n\n' + results.join('\n');
-  if (errors.length > 0) {
-    summary += '\n\nErrors:\n' + errors.join('\n');
-  }
-  Logger.log(summary);
-  _safeAlert(summary);
-}
-
-/**
- * Full rebuild: deletes ALL SP Data dump sheets and recreates from scratch.
- * Use this only when you need to fix corrupted data or after schema changes.
- * WARNING: slow — fetches full history for all marketplaces.
- */
-function fullRebuild() {
-  var ui = SpreadsheetApp.getUi();
   var confirm = ui.alert(
-    'Full Rebuild',
-    'This will DELETE and recreate all SP Data sheets from scratch.\n' +
-    'Rolling, Inventory, and Fees are always full refresh (small data).\n\n' +
-    'Only SP Data sheets need rebuilding — they normally use incremental updates.\n\n' +
+    'Setup Daily Triggers',
+    'This will create daily triggers for ' + countries.length + ' marketplaces:\n' +
+    countries.join(', ') + '\n\n' +
+    '4 triggers per country (sales, rolling, inventory, fees)\n' +
+    'Total: ' + (countries.length * 4) + ' triggers\n' +
+    'Staggered 3 min apart starting at 6:00 AM\n\n' +
+    'Any existing "trigger_" triggers will be deleted first.\n\n' +
     'Continue?',
     ui.ButtonSet.YES_NO);
 
   if (confirm !== ui.Button.YES) return;
 
-  var config = getSupabaseConfig();
-  var keys = Object.keys(config.marketplaces);
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  // Delete existing trigger_ functions
+  var existing = ScriptApp.getProjectTriggers();
+  var deleted = 0;
+  for (var t = 0; t < existing.length; t++) {
+    if (existing[t].getHandlerFunction().indexOf('trigger_') === 0) {
+      ScriptApp.deleteTrigger(existing[t]);
+      deleted++;
+    }
+  }
+  Logger.log('Deleted ' + deleted + ' existing triggers');
 
-  // Delete existing SP Data sheets so refreshSPData does a full pull
-  for (var i = 0; i < keys.length; i++) {
-    var sheetName = 'SP Data ' + keys[i];
-    var existing = ss.getSheetByName(sheetName);
-    if (existing) {
-      ss.deleteSheet(existing);
-      Logger.log('Deleted sheet: ' + sheetName);
+  // Data types for each country
+  var types = ['sales', 'rolling', 'inventory', 'fees'];
+  var startHour = 6;
+  var startMinute = 0;
+  var created = 0;
+
+  for (var i = 0; i < countries.length; i++) {
+    var country = countries[i];
+    var minuteOffset = startMinute + (i * 3);
+    var hour = startHour + Math.floor(minuteOffset / 60);
+    var minute = minuteOffset % 60;
+
+    for (var j = 0; j < types.length; j++) {
+      var funcName = 'trigger_' + country + '_' + types[j];
+
+      // Verify function exists
+      try {
+        ScriptApp.newTrigger(funcName)
+          .timeBased()
+          .atHour(hour)
+          .nearMinute(minute)
+          .everyDays(1)
+          .create();
+        created++;
+        Logger.log('Created trigger: ' + funcName + ' at ~' + hour + ':' + String(minute).padStart(2, '0'));
+      } catch (e) {
+        Logger.log('Failed to create trigger ' + funcName + ': ' + e.message);
+      }
     }
   }
 
-  // Now run normal refresh — it will detect empty sheets and do full pull
-  refreshEverything();
+  ui.alert('Triggers created!\n\n' +
+    'Deleted: ' + deleted + ' old triggers\n' +
+    'Created: ' + created + ' new triggers\n\n' +
+    'Schedule (daily):\n' +
+    countries.map(function(c, idx) {
+      var mo = startMinute + (idx * 3);
+      var h = startHour + Math.floor(mo / 60);
+      var m = mo % 60;
+      return c + ' → ~' + h + ':' + String(m).padStart(2, '0');
+    }).join('\n'));
+}
+
+/**
+ * Deletes all trigger_ triggers. Use to stop automation.
+ */
+function removeAllTriggers() {
+  var existing = ScriptApp.getProjectTriggers();
+  var deleted = 0;
+  for (var t = 0; t < existing.length; t++) {
+    if (existing[t].getHandlerFunction().indexOf('trigger_') === 0) {
+      ScriptApp.deleteTrigger(existing[t]);
+      deleted++;
+    }
+  }
+  _safeAlert('Removed ' + deleted + ' triggers.');
+}
+
+/**
+ * Manual run: refresh one country at a time from menu.
+ * Runs all 4 data types sequentially for the selected country.
+ */
+function refreshOneCountry() {
+  var ui = SpreadsheetApp.getUi();
+  var response = ui.prompt(
+    'Refresh One Country',
+    'Enter country code (US, CA, MX, UK, DE, FR, IT, ES, AU, UAE):',
+    ui.ButtonSet.OK_CANCEL);
+
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  var country = response.getResponseText().trim().toUpperCase();
+  var config = getSupabaseConfig();
+
+  if (!config.marketplaces[country]) {
+    ui.alert('Country "' + country + '" not found in Script Config!\n\nAvailable: ' +
+      Object.keys(config.marketplaces).join(', '));
+    return;
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var errors = [];
+
+  var steps = [
+    { name: 'Sales', fn: function() { refreshSPData(country, country); } },
+    { name: 'Rolling', fn: function() { refreshRollingData(country, country); } },
+    { name: 'Inventory', fn: function() { refreshInventoryData(country, country); } },
+    { name: 'Fees', fn: function() { refreshFeesData(country, country); } }
+  ];
+
+  for (var i = 0; i < steps.length; i++) {
+    ss.toast('(' + (i + 1) + '/4) ' + country + ' ' + steps[i].name + '...', 'Refreshing', 120);
+    try {
+      steps[i].fn();
+    } catch (e) {
+      errors.push(steps[i].name + ': ' + e.message);
+    }
+  }
+
+  if (errors.length > 0) {
+    ui.alert(country + ' refresh done with errors:\n\n' + errors.join('\n'));
+  } else {
+    ui.alert(country + ' — all 4 data types refreshed!');
+  }
 }
 
 /**
@@ -945,8 +1081,11 @@ function _safeAlert(message) {
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('Supabase Data')
-    .addItem('Refresh Everything', 'refreshEverything')
-    .addItem('Full Rebuild (slow)', 'fullRebuild')
+    .addItem('Refresh One Country...', 'refreshOneCountry')
+    .addSeparator()
+    .addSubMenu(ui.createMenu('Automation')
+      .addItem('Setup Daily Triggers', 'setupDailyTriggers')
+      .addItem('Remove All Triggers', 'removeAllTriggers'))
     .addSeparator()
     .addSubMenu(ui.createMenu('Daily Sheets')
       .addItem('Refresh Current Sheet', 'refreshCurrentDailySheet')
