@@ -1,10 +1,10 @@
 name: Daily SP-API Sales Pull
 
 on:
-  # Run multiple times daily to keep data fresh
-  # 2 AM, 8 AM, 2 PM, 8 PM UTC
+  # Run once daily — pulls yesterday's S&T + refreshes last 14 days for attribution
+  # 6 AM UTC = 10 AM Dubai GST
   schedule:
-    - cron: '0 2,8,14,20 * * *'
+    - cron: '0 6 * * *'
 
   # Allow manual trigger
   workflow_dispatch:

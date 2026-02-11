@@ -1,10 +1,10 @@
-name: Near-Real-Time Orders Pull
+name: Orders Pull - NA (USA, CA)
 
 on:
-  # Run 6x daily for near-real-time sales data
-  # Every 4 hours: 0, 4, 8, 12, 16, 20 UTC
+  # 16 runs/day optimized for Dubai GST morning visibility
+  # Dubai: 12p,3p,5p,6p,7p,9p,11p,12a,2a,3a,4a,5a,6a,7a,9a,11a
   schedule:
-    - cron: '0 0,4,8,12,16,20 * * *'
+    - cron: '0 0,1,2,3,5,7,8,11,13,14,15,17,19,20,22,23 * * *'
 
   # Allow manual trigger
   workflow_dispatch:
@@ -13,18 +13,8 @@ on:
         description: 'Date to pull (YYYY-MM-DD). Default: today + yesterday'
         required: false
       marketplace:
-        description: 'Specific marketplace (e.g., USA, UK, AU). Leave empty for all in region'
+        description: 'Single marketplace override (USA or CA). Leave empty for both'
         required: false
-      region:
-        description: 'Region to pull (NA, EU, FE). Leave empty for all regions'
-        required: false
-        type: choice
-        options:
-          - ''
-          - 'NA'
-          - 'EU'
-          - 'FE'
-          - 'UAE'
       today_only:
         description: 'Only pull today (skip yesterday catch-up)'
         type: boolean
@@ -38,10 +28,6 @@ jobs:
   pull-orders:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        region: ${{ github.event.inputs.region != '' && fromJSON(format('["{0}"]', github.event.inputs.region)) || fromJSON('["NA", "EU", "FE", "UAE"]') }}
 
     steps:
       - name: Checkout repository
@@ -56,25 +42,25 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Pull orders data (${{ matrix.region }})
+      - name: Pull orders data (USA, CA)
         env:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
           SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
-          SP_REFRESH_TOKEN_EU: ${{ secrets.SP_REFRESH_TOKEN_EU }}
-          SP_REFRESH_TOKEN_FE: ${{ secrets.SP_REFRESH_TOKEN_FE }}
-          SP_REFRESH_TOKEN_UAE: ${{ secrets.SP_REFRESH_TOKEN_UAE }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
-          CMD="python scripts/pull_orders_daily.py --region ${{ matrix.region }}"
+          CMD="python scripts/pull_orders_daily.py --region NA --marketplaces USA,CA"
 
           if [ -n "${{ github.event.inputs.date }}" ]; then
             CMD="$CMD --date ${{ github.event.inputs.date }}"
           fi
 
           if [ -n "${{ github.event.inputs.marketplace }}" ]; then
-            CMD="$CMD --marketplace ${{ github.event.inputs.marketplace }}"
+            CMD="python scripts/pull_orders_daily.py --region NA --marketplace ${{ github.event.inputs.marketplace }}"
+            if [ -n "${{ github.event.inputs.date }}" ]; then
+              CMD="$CMD --date ${{ github.event.inputs.date }}"
+            fi
           fi
 
           if [ "${{ github.event.inputs.today_only }}" = "true" ]; then
@@ -91,10 +77,8 @@ jobs:
       - name: Post summary
         if: always()
         run: |
-          echo "## Near-Real-Time Orders Pull Results (${{ matrix.region }})" >> $GITHUB_STEP_SUMMARY
+          echo "## Orders Pull - NA / USA, CA (${{ job.status }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ matrix.region }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Date:** ${{ github.event.inputs.date || 'Today + yesterday (per marketplace TZ)' }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Marketplace:** ${{ github.event.inputs.marketplace || format('All {0}', matrix.region) }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Dry Run:** ${{ github.event.inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Marketplaces:** USA, CA" >> $GITHUB_STEP_SUMMARY
+          echo "**Schedule:** 16x/day (Dubai: 12p,3p,5p,6p,7p,9p,11p,12a,2a,3a,4a,5a,6a,7a,9a,11a)" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY

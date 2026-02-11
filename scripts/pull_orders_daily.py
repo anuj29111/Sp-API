@@ -15,6 +15,7 @@ Usage:
     python pull_orders_daily.py                       # Pull today + yesterday for all NA
     python pull_orders_daily.py --date 2026-02-07     # Pull specific date
     python pull_orders_daily.py --marketplace USA     # Single marketplace
+    python pull_orders_daily.py --marketplaces USA,CA  # Multiple specific marketplaces
     python pull_orders_daily.py --today-only           # Skip yesterday catch-up
     python pull_orders_daily.py --dry-run              # Show what would be pulled
     python pull_orders_daily.py --force                # Overwrite even if S&T data exists
@@ -180,6 +181,7 @@ def pull_orders_region(
     report_date: date = None,
     today_only: bool = False,
     marketplace_filter: str = None,
+    marketplaces_filter: List[str] = None,
     dry_run: bool = False
 ) -> List[dict]:
     """
@@ -192,7 +194,8 @@ def pull_orders_region(
         region: API region
         report_date: Specific date to pull (overrides today/yesterday logic)
         today_only: Only pull today (skip yesterday catch-up)
-        marketplace_filter: Single marketplace to process
+        marketplace_filter: Single marketplace to process (legacy, use marketplaces_filter)
+        marketplaces_filter: List of marketplace codes to process (e.g., ['USA', 'CA'])
         dry_run: Show what would be pulled without upserting
 
     Returns:
@@ -207,8 +210,10 @@ def pull_orders_region(
     # Create SPAPIClient
     client = SPAPIClient(access_token, region=region)
 
-    # Determine marketplaces
-    if marketplace_filter:
+    # Determine marketplaces (priority: marketplaces_filter > marketplace_filter > region default)
+    if marketplaces_filter:
+        marketplaces = [m.upper() for m in marketplaces_filter]
+    elif marketplace_filter:
         marketplaces = [marketplace_filter.upper()]
     else:
         marketplaces = MARKETPLACES_BY_REGION.get(region.upper(), [])
@@ -282,7 +287,12 @@ def main():
     parser.add_argument(
         "--marketplace",
         type=str,
-        help="Single marketplace code (e.g., USA). Default: all NA marketplaces"
+        help="Single marketplace code (e.g., USA). Default: all marketplaces in region"
+    )
+    parser.add_argument(
+        "--marketplaces",
+        type=str,
+        help="Comma-separated marketplace codes (e.g., USA,CA). Overrides --marketplace"
     )
     parser.add_argument(
         "--region",
@@ -314,12 +324,25 @@ def main():
     if args.date:
         report_date = date.fromisoformat(args.date)
 
+    # Parse marketplaces list if provided
+    marketplaces_list = None
+    if args.marketplaces:
+        marketplaces_list = [m.strip() for m in args.marketplaces.split(",")]
+
+    # Determine display label for marketplaces
+    if marketplaces_list:
+        mp_display = ", ".join(marketplaces_list)
+    elif args.marketplace:
+        mp_display = args.marketplace
+    else:
+        mp_display = f"All {args.region}"
+
     print("\n" + "=" * 60)
     print("📦 NEAR-REAL-TIME ORDERS PULL")
     print("=" * 60)
     print(f"📅 Date: {report_date or 'today + yesterday (per marketplace TZ)'}")
     print(f"🌎 Region: {args.region}")
-    print(f"🏪 Marketplace: {args.marketplace or 'All ' + args.region}")
+    print(f"🏪 Marketplaces: {mp_display}")
     if args.dry_run:
         print("🏃 DRY RUN MODE")
     print()
@@ -330,6 +353,7 @@ def main():
         report_date=report_date,
         today_only=args.today_only,
         marketplace_filter=args.marketplace,
+        marketplaces_filter=marketplaces_list,
         dry_run=args.dry_run
     )
 

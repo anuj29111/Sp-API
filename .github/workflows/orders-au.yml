@@ -1,0 +1,73 @@
+name: Orders Pull - AU
+
+on:
+  # 6 runs/day
+  # Dubai: 12a, 3a, 6a, 9a, 12p, 5p
+  schedule:
+    - cron: '0 2,5,8,13,20,23 * * *'
+
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Date to pull (YYYY-MM-DD). Default: today + yesterday'
+        required: false
+      today_only:
+        description: 'Only pull today (skip yesterday catch-up)'
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Pull and aggregate but do not upsert to database'
+        type: boolean
+        default: false
+
+jobs:
+  pull-orders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Pull orders data (AU)
+        env:
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+          SP_REFRESH_TOKEN_FE: ${{ secrets.SP_REFRESH_TOKEN_FE }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          CMD="python scripts/pull_orders_daily.py --region FE"
+
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            CMD="$CMD --date ${{ github.event.inputs.date }}"
+          fi
+
+          if [ "${{ github.event.inputs.today_only }}" = "true" ]; then
+            CMD="$CMD --today-only"
+          fi
+
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            CMD="$CMD --dry-run"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
+
+      - name: Post summary
+        if: always()
+        run: |
+          echo "## Orders Pull - AU (${{ job.status }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Marketplace:** AU" >> $GITHUB_STEP_SUMMARY
+          echo "**Schedule:** 6x/day (Dubai: 12a, 3a, 6a, 9a, 12p, 5p)" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY

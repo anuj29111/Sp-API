@@ -1,0 +1,83 @@
+name: Orders Pull - EU Core (UK, DE, FR)
+
+on:
+  # 12 runs/day for high-volume EU marketplaces
+  # Dubai: 6a,8a,10a,12p,2p,3p,4p,5p,6p,8p,10p,12a
+  schedule:
+    - cron: '0 2,4,6,8,10,11,12,13,14,16,18,20 * * *'
+
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Date to pull (YYYY-MM-DD). Default: today + yesterday'
+        required: false
+      marketplace:
+        description: 'Single marketplace override (UK, DE, or FR). Leave empty for all three'
+        required: false
+      today_only:
+        description: 'Only pull today (skip yesterday catch-up)'
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Pull and aggregate but do not upsert to database'
+        type: boolean
+        default: false
+
+jobs:
+  pull-orders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Pull orders data (UK, DE, FR)
+        env:
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+          SP_REFRESH_TOKEN_EU: ${{ secrets.SP_REFRESH_TOKEN_EU }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          CMD="python scripts/pull_orders_daily.py --region EU --marketplaces UK,DE,FR"
+
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            CMD="$CMD --date ${{ github.event.inputs.date }}"
+          fi
+
+          if [ -n "${{ github.event.inputs.marketplace }}" ]; then
+            CMD="python scripts/pull_orders_daily.py --region EU --marketplace ${{ github.event.inputs.marketplace }}"
+            if [ -n "${{ github.event.inputs.date }}" ]; then
+              CMD="$CMD --date ${{ github.event.inputs.date }}"
+            fi
+          fi
+
+          if [ "${{ github.event.inputs.today_only }}" = "true" ]; then
+            CMD="$CMD --today-only"
+          fi
+
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            CMD="$CMD --dry-run"
+          fi
+
+          echo "Running: $CMD"
+          $CMD
+
+      - name: Post summary
+        if: always()
+        run: |
+          echo "## Orders Pull - EU Core / UK, DE, FR (${{ job.status }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Marketplaces:** UK, DE, FR" >> $GITHUB_STEP_SUMMARY
+          echo "**Schedule:** 12x/day (Dubai: 6a,8a,10a,12p,2p,3p,4p,5p,6p,8p,10p,12a)" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
