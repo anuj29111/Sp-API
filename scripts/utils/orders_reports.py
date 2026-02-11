@@ -20,7 +20,7 @@ TSV columns used:
 - order-status: Order status (Shipped, Pending, Cancelled, etc.)
 - purchase-date: When order was placed
 
-Excluded statuses: Cancelled, Pending
+Excluded statuses: Cancelled only (Pending included — matches S&T behavior)
 """
 
 import csv
@@ -59,7 +59,10 @@ MARKETPLACE_IDS = {
 }
 
 # Order statuses to exclude from aggregation
-EXCLUDED_STATUSES = {"Cancelled", "Pending"}
+# Only exclude Cancelled — Pending orders are real orders that haven't shipped yet.
+# Amazon's Sales & Traffic report counts them immediately, so we should too.
+# Cancellation rate is typically <2%, and S&T overwrites this data within 24hrs anyway.
+EXCLUDED_STATUSES = {"Cancelled"}
 
 REPORT_TYPE = "GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL"
 
@@ -279,7 +282,8 @@ def aggregate_orders_by_asin(
     - item-price → ordered_product_sales (total for line item, not per-unit)
     - COUNT DISTINCT amazon-order-id → total_order_items
 
-    Excludes Cancelled and Pending orders.
+    Excludes Cancelled orders only (Pending are included — they're real orders
+    that Amazon's S&T also counts immediately).
     Filters by sales-channel when marketplace_code is provided (critical for EU
     where the unified account returns orders from all EU marketplaces).
 
@@ -352,7 +356,7 @@ def aggregate_orders_by_asin(
     if channel_filtered_count > 0:
         print(f"  🔍 Filtered out {channel_filtered_count} rows from other marketplaces (kept {expected_channel})")
     if excluded_count > 0:
-        print(f"  ⏭️  Excluded {excluded_count} Cancelled/Pending order lines")
+        print(f"  ⏭️  Excluded {excluded_count} Cancelled order lines")
 
     # Convert to list of dicts
     result = []
