@@ -20,15 +20,15 @@ POP System (Advertising API) ─────────────────
 ```
 
 - **Supabase**: `chalkola-one-system` (yawaopfqkkvdqtsagmng)
-- **GitHub Actions**: Python scripts on cron schedules, 4 regions in parallel
+- **GitHub Actions**: Python scripts on per-region cron schedules (6 orders workflows + 1 S&T daily)
 - **POP System**: Advertising data already in same Supabase
 
 ## Phase Status
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| 1. Sales & Traffic | ✅ Complete | 4x/day pull, 14-day attribution refresh |
-| 1.5 Near-Real-Time Orders | ✅ Complete | 6x/day, ~30min delay, S&T overwrites when available |
+| 1. Sales & Traffic | ✅ Complete | 1x/day pull (6AM UTC), 14-day attribution refresh |
+| 1.5 Near-Real-Time Orders | ✅ Complete | Per-region schedules (9-16x/day), ~30min delay, S&T overwrites when available |
 | 2. Inventory | ✅ Complete | FBA (API for NA, report for EU/FE), AWD (NA only), Storage Fees |
 | 2.5 SQP/SCP | ✅ Complete | Weekly/monthly search performance, backfill running |
 | 2.6 Search Terms (TST) | ✅ Complete | Top 3 competitor ASINs per keyword, weekly auto-pull |
@@ -47,8 +47,8 @@ POP System (Advertising API) ─────────────────
 | UK | A1F83G8C2ARO7P | Europe/London | EU | `SP_REFRESH_TOKEN_EU` | `b2c3d4e5-58cc-4372-a567-0e02b2c3d481` |
 | DE | A1PA6795UKMFR9 | Europe/Berlin | EU | `SP_REFRESH_TOKEN_EU` | `c3d4e5f6-58cc-4372-a567-0e02b2c3d482` |
 | FR | A13V1IB3VIYZZH | Europe/Paris | EU | `SP_REFRESH_TOKEN_EU` | `d4e5f6a7-58cc-4372-a567-0e02b2c3d483` |
-| IT | APJ6JRA9NG5V4 | Europe/Rome | EU | `SP_REFRESH_TOKEN_EU` | `b8c9d0e1-58cc-4372-a567-0e02b2c3d487` |
-| ES | A1RKKUPIHCS9HS | Europe/Madrid | EU | `SP_REFRESH_TOKEN_EU` | `d0e1f2a3-58cc-4372-a567-0e02b2c3d489` |
+| IT | APJ6JRA9NG5V4 | Europe/Rome | EU | `SP_REFRESH_TOKEN_EU` | `a7b8c9d0-58cc-4372-a567-0e02b2c3d486` |
+| ES | A1RKKUPIHCS9HS | Europe/Madrid | EU | `SP_REFRESH_TOKEN_EU` | `b8c9d0e1-58cc-4372-a567-0e02b2c3d487` |
 | UAE | A2VIGQ35RCS4UG | Asia/Dubai | UAE | `SP_REFRESH_TOKEN_UAE` | `e5f6a7b8-58cc-4372-a567-0e02b2c3d484` |
 | AU | A39IBJ37TRP1C6 | Australia/Sydney | FE | `SP_REFRESH_TOKEN_FE` | `f6a7b8c9-58cc-4372-a567-0e02b2c3d485` |
 
@@ -88,7 +88,14 @@ Full schema details: `Documentation/database-schema.md`
 - **EU Inventory**: FBA Inventory API v1 only returns local FC stock. EU uses report with EFN local/remote columns instead.
 - **SQP constraints**: No daily granularity (weekly finest), ~18 ASINs/batch, ~48hr delay, brand-registered only.
 - **Search Terms Report**: Bulk ~12M rows / ~2.3 GB. Stream-parsed with ijson (~165s). Only ~25% of SQP keywords match (small-volume terms absent). Runs Tue 6 AM UTC after SQP.
+- **ijson returns Decimal**: All JSON numbers become Python `Decimal` objects. Must convert to `float`/`int` before Supabase upsert or serialization fails.
+- **SP-API week boundaries**: Amazon weeks are Sunday–Saturday, NOT Monday–Sunday. Misaligned dates cause FATAL report status.
 - **GitHub Actions timeout**: 5.5hr limit per run. Backfills run 4x/day to work around this.
+- **Orders workflows are per-region**: 6 separate workflow files (`orders-na.yml`, `orders-mx.yml`, `orders-eu-core.yml`, `orders-eu-other.yml`, `orders-au.yml`, `orders-uae.yml`). Use `--marketplaces USA,CA` flag (comma-separated) to target specific marketplaces within a region. All cron times are Dubai GST converted to UTC.
+- **S&T daily-pull.yml runs once/day at 6AM UTC (10AM Dubai)**: Don't increase frequency — the 14-day refresh is heavy. Orders workflows handle near-real-time.
+- **Google Apps Script 6-min limit**: Each trigger function must complete within 6 min. Google Sheets integration uses per-country per-data-type trigger functions (40 total) staggered 3 min apart.
+- **Google Sheets `_safeAlert()` pattern**: Trigger context has no UI — `SpreadsheetApp.getUi()` throws. Always wrap alerts in try/catch with `Logger.log` fallback.
+- **IT/ES UUID was historically wrong**: Old docs had IT=`b8c9d0e1-...` (that's Spain) and ES=`d0e1f2a3-...` (that's Japan). Fixed Feb 2026. If any config still uses old values, correct them.
 
 ## GitHub Secrets
 
@@ -106,13 +113,39 @@ Full schema details: `Documentation/database-schema.md`
 
 ### Backfills In Progress
 - **Historical Sales (EU/FE)**: Auto-running 4x/day until 2-year coverage complete
-- **SQP/SCP**: Running 4x/day. NA ~19 days from Feb 8. EU/FE just started.
+- **SQP/SCP**: Running 4x/day until 2-year backfill complete
 
 ### Pending Work
+- **Monthly TST pull**: Add `--period-type MONTH` to Search Terms automation once monthly SQP backfill has enough data to match against
 - **Phase 4**: Product master table + COGS entry (via Google Sheets)
 - **Phase 5**: CM1/CM2 calculation views (settlements + COGS + POP ad spend)
 - **Phase 6**: Web dashboard
-- **Google Sheets**: Verify fee data against GorillaROI, formula refinement
+- **Google Sheets formula refinement**: Verify fee data against GorillaROI; trigger automation deployed (all 10 countries), needs user to add marketplace UUIDs to Script Config sheet for UK/DE/FR/IT/ES/AU/UAE
+
+## Downstream Consumer: Chalkola ONE
+
+Chalkola ONE (`/Users/anuj/Desktop/Github/Chalkola ONE/`) is the frontend/backend that reads SP-API data.
+
+**How it reads data:**
+- Frontend reads `sp_daily_asin_data`, `sp_sqp_data`, `sp_scp_data`, `sp_fba_inventory` directly via Supabase RLS
+- Backend (Flask on Railway) reads PPC tables + S&T for Business Overview, Negation, AI queries
+- Supabase RPC: `exec_sql` = void (INSERT/UPDATE/DELETE), `execute_readonly_query` = jsonb (SELECT). Parameter: `query_text`
+
+**Critical data rules Chalkola ONE depends on:**
+- `products.parent_asin` is a product NAME, not an ASIN — join through `product_variants`
+- Child ASIN PPC: must come from `pop_sp_advertised_product_data`, NOT search term tables
+- PPC tables: monthly/weekly = `pop_sp_search_term_data`, daily = `pop_sp_search_term_data_daily`
+- BR date column = `date` on `sp_daily_totals`; PPC daily tables use `report_date`
+- `si_daily_ranks` (2.3M+ rows) — always filter by marketplace + date range
+- Pre-computed views (`sp_weekly_asin_data_mat`, `sp_monthly_asin_data_mat`) should be used instead of raw GROUP BY on daily tables
+
+**If you change table schemas, column names, or data formats**, these will break Chalkola ONE. Check the Chalkola ONE CLAUDE.md for downstream dependencies.
+
+### ScaleInsights (`/Users/anuj/Desktop/Github/Scale Insights/`)
+
+Separate data pipeline — pulls keyword ranking data (organic + sponsored) into `si_keywords` + `si_daily_ranks`. Runs daily via GitHub Actions. Covers 6 countries: US, CA, UK, DE, FR, AU (NOT MX, IT, ES, UAE). No dependency on SP-API tables.
+
+---
 
 ## Reference Docs (read on-demand, not loaded every session)
 
