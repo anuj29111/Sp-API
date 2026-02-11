@@ -63,6 +63,23 @@ EXCLUDED_STATUSES = {"Cancelled", "Pending"}
 
 REPORT_TYPE = "GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL"
 
+# Sales channel mapping for filtering orders by marketplace
+# The orders report returns ALL orders for the region (especially EU unified account),
+# so we must filter by sales-channel to get only the requested marketplace's orders.
+SALES_CHANNEL_MAP = {
+    "USA": "Amazon.com",
+    "CA": "Amazon.ca",
+    "MX": "Amazon.com.mx",
+    "UK": "Amazon.co.uk",
+    "DE": "Amazon.de",
+    "FR": "Amazon.fr",
+    "IT": "Amazon.it",
+    "ES": "Amazon.es",
+    "UAE": "Amazon.ae",
+    "AU": "Amazon.com.au",
+    "JP": "Amazon.co.jp",
+}
+
 
 def get_endpoint(region: str) -> str:
     """Get the API endpoint for a region."""
@@ -251,7 +268,8 @@ def download_orders_report(
 
 def aggregate_orders_by_asin(
     rows: List[Dict[str, str]],
-    report_date: date = None
+    report_date: date = None,
+    marketplace_code: str = None
 ) -> List[Dict[str, Any]]:
     """
     Aggregate order line items by ASIN.
@@ -262,14 +280,20 @@ def aggregate_orders_by_asin(
     - COUNT DISTINCT amazon-order-id → total_order_items
 
     Excludes Cancelled and Pending orders.
+    Filters by sales-channel when marketplace_code is provided (critical for EU
+    where the unified account returns orders from all EU marketplaces).
 
     Args:
         rows: Raw TSV rows from download_orders_report()
         report_date: Date for the data (optional, for logging)
+        marketplace_code: Marketplace code to filter by (e.g., 'UK', 'DE')
 
     Returns:
         List of aggregated dicts ready for upsert
     """
+    # Filter by sales-channel if marketplace_code provided
+    expected_channel = SALES_CHANNEL_MAP.get(marketplace_code.upper()) if marketplace_code else None
+
     # Aggregate by ASIN
     asin_data = defaultdict(lambda: {
         "units_ordered": 0,
@@ -279,8 +303,16 @@ def aggregate_orders_by_asin(
     })
 
     excluded_count = 0
+    channel_filtered_count = 0
 
     for row in rows:
+        # Filter by sales-channel (critical for EU unified account)
+        if expected_channel:
+            row_channel = row.get("sales-channel", "").strip()
+            if row_channel and row_channel != expected_channel:
+                channel_filtered_count += 1
+                continue
+
         # Get order status
         order_status = row.get("order-status", "").strip()
         if order_status in EXCLUDED_STATUSES:
@@ -317,6 +349,8 @@ def aggregate_orders_by_asin(
         if currency and not asin_data[asin]["currency_code"]:
             asin_data[asin]["currency_code"] = currency
 
+    if channel_filtered_count > 0:
+        print(f"  🔍 Filtered out {channel_filtered_count} rows from other marketplaces (kept {expected_channel})")
     if excluded_count > 0:
         print(f"  ⏭️  Excluded {excluded_count} Cancelled/Pending order lines")
 
@@ -384,7 +418,7 @@ def pull_orders_report(
         access_token=access_token
     )
 
-    # Aggregate by ASIN
-    aggregated = aggregate_orders_by_asin(raw_rows, report_date)
+    # Aggregate by ASIN (filtered by marketplace sales-channel)
+    aggregated = aggregate_orders_by_asin(raw_rows, report_date, marketplace_code)
 
     return aggregated
