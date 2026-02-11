@@ -60,7 +60,7 @@ POP System (Advertising API) ─────────────────
 
 | Table | Purpose |
 |-------|---------|
-| `sp_daily_asin_data` | Per-ASIN daily sales & traffic (+ orders data via `data_source` column) |
+| `sp_daily_asin_data` | Per-ASIN daily sales & traffic (+ orders data via `data_source` column). **Use `sp_daily_asin_data_deduped` view for queries** — it deduplicates S&T vs orders (S&T takes priority) |
 | `sp_fba_inventory` | Daily FBA inventory (includes `fulfillable_quantity_local`/`_remote` for EU EFN) |
 | `sp_awd_inventory` | Daily AWD inventory (NA only) |
 | `sp_storage_fees` | Monthly storage fees by FNSKU+FC |
@@ -72,6 +72,8 @@ POP System (Advertising API) ─────────────────
 | `sp_fba_fee_estimates` | Current fee estimates per ASIN (not historical) |
 
 Pull tracking tables: `sp_api_pulls`, `sp_inventory_pulls`, `sp_sqp_pulls`, `sp_financial_pulls`, `sp_search_terms_pulls`
+
+Deduplication view: `sp_daily_asin_data_deduped` — returns one row per (child_asin, date, marketplace_id), preferring `sales_traffic` over `orders`. **All downstream queries should use this view, not the raw table.**
 
 Materialized views: `sp_weekly_asin_data_mat`, `sp_monthly_asin_data_mat`, `sp_rolling_asin_metrics_mat` (with wrapper views for backwards compat)
 
@@ -91,6 +93,8 @@ Full schema details: `Documentation/database-schema.md`
 - **ijson returns Decimal**: All JSON numbers become Python `Decimal` objects. Must convert to `float`/`int` before Supabase upsert or serialization fails.
 - **SP-API week boundaries**: Amazon weeks are Sunday–Saturday, NOT Monday–Sunday. Misaligned dates cause FATAL report status.
 - **GitHub Actions timeout**: 5.5hr limit per run. Backfills run 4x/day to work around this.
+- **EU orders report returns ALL EU marketplaces** (BUG FIXED Feb 2026): `GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL` returns orders from the entire EU unified account regardless of which `marketplaceId` is passed. Fixed by filtering rows by `sales-channel` column (e.g., `Amazon.co.uk`, `Amazon.de`) in `aggregate_orders_by_asin()`. NA/FE/UAE are single-account so unaffected.
+- **Orders + S&T double-counting** (BUG FIXED Feb 2026): `sp_daily_asin_data` stores both `data_source='orders'` and `data_source='sales_traffic'` rows for the same ASIN+date. Queries must use `sp_daily_asin_data_deduped` view (prefers S&T over orders) to avoid summing both.
 - **Orders workflows are per-region**: 6 separate workflow files (`orders-na.yml`, `orders-mx.yml`, `orders-eu-core.yml`, `orders-eu-other.yml`, `orders-au.yml`, `orders-uae.yml`). Use `--marketplaces USA,CA` flag (comma-separated) to target specific marketplaces within a region. All cron times are Dubai GST converted to UTC.
 - **S&T daily-pull.yml runs once/day at 6AM UTC (10AM Dubai)**: Don't increase frequency — the 14-day refresh is heavy. Orders workflows handle near-real-time.
 - **Google Apps Script 6-min limit**: Each trigger function must complete within 6 min. Google Sheets integration uses per-country per-data-type trigger functions (40 total) staggered 3 min apart.
@@ -127,8 +131,9 @@ Full schema details: `Documentation/database-schema.md`
 Chalkola ONE (`/Users/anuj/Desktop/Github/Chalkola ONE/`) is the frontend/backend that reads SP-API data.
 
 **How it reads data:**
-- Frontend reads `sp_daily_asin_data`, `sp_sqp_data`, `sp_scp_data`, `sp_fba_inventory` directly via Supabase RLS
-- Backend (Flask on Railway) reads PPC tables + S&T for Business Overview, Negation, AI queries
+- Backend (Flask on Railway) queries `sp_daily_asin_data_deduped` (not raw table) for all daily sales/traffic data — prevents double-counting orders vs S&T
+- Frontend reads `sp_sqp_data`, `sp_scp_data`, `sp_fba_inventory` directly via Supabase RLS
+- Backend reads PPC tables + S&T for Business Overview, Negation, AI queries
 - Supabase RPC: `exec_sql` = void (INSERT/UPDATE/DELETE), `execute_readonly_query` = jsonb (SELECT). Parameter: `query_text`
 
 **Critical data rules Chalkola ONE depends on:**
