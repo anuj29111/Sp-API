@@ -29,8 +29,9 @@ import io
 import logging
 import time
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Any, Optional
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,23 @@ MARKETPLACE_IDS = {
     "UAE": {"id": "A2VIGQ35RCS4UG", "region": "UAE"},
     "AU": {"id": "A39IBJ37TRP1C6", "region": "FE"},
     "JP": {"id": "A1VC38T7YXB528", "region": "FE"}
+}
+
+# Marketplace timezone mapping — used to convert local dates to UTC boundaries
+# for the orders report API (which expects UTC timestamps)
+MARKETPLACE_TIMEZONES = {
+    "USA": "America/Los_Angeles",
+    "CA": "America/Los_Angeles",
+    "MX": "America/Los_Angeles",
+    "BR": "America/Sao_Paulo",
+    "UK": "Europe/London",
+    "DE": "Europe/Berlin",
+    "FR": "Europe/Paris",
+    "IT": "Europe/Rome",
+    "ES": "Europe/Madrid",
+    "UAE": "Asia/Dubai",
+    "AU": "Australia/Sydney",
+    "JP": "Asia/Tokyo",
 }
 
 # Order statuses to exclude from aggregation
@@ -118,9 +136,19 @@ def create_orders_report(
     amazon_marketplace_id = marketplace_info["id"]
     endpoint = get_endpoint(region)
 
-    # Date range: full day (00:00:00 to 23:59:59)
-    start_time = f"{report_date.isoformat()}T00:00:00Z"
-    end_time = f"{report_date.isoformat()}T23:59:59Z"
+    # Convert marketplace local date to UTC boundaries
+    # e.g., USA Feb 11 (PST) = Feb 11 08:00:00Z to Feb 12 07:59:59Z
+    tz_name = MARKETPLACE_TIMEZONES.get(marketplace_code.upper(), "UTC")
+    tz = ZoneInfo(tz_name)
+    local_start = datetime(report_date.year, report_date.month, report_date.day, 0, 0, 0, tzinfo=tz)
+    local_end = datetime(report_date.year, report_date.month, report_date.day, 23, 59, 59, tzinfo=tz)
+    utc_start = local_start.astimezone(ZoneInfo("UTC"))
+    utc_end = local_end.astimezone(ZoneInfo("UTC"))
+
+    start_time = utc_start.strftime("%Y-%m-%dT%H:%M:%SZ")
+    end_time = utc_end.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    print(f"  📅 Date range: {report_date} ({tz_name}) → {start_time} to {end_time}")
 
     url = f"https://{endpoint}/reports/2021-06-30/reports"
 
