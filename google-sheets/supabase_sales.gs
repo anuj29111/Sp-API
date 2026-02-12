@@ -834,13 +834,110 @@ function refreshFeesData(country, configKey) {
 }
 
 // ============================================
+// REFRESH: SP DAILY (Last 35 days of daily data)
+// ============================================
+
+/**
+ * Refreshes SP Daily dump sheet for a marketplace.
+ * Fetches last 35 days of per-ASIN daily data from the deduped view.
+ * Full clear + rewrite each run (data is small: ~100 ASINs x 35 days).
+ *
+ * Layout:
+ *   A = child_asin
+ *   B = date (YYYY-MM-DD)
+ *   C = units_ordered
+ *   D = units_ordered_b2b
+ *   E = ordered_product_sales
+ *   F = ordered_product_sales_b2b
+ *   G = sessions
+ *   H = page_views
+ *   I = buy_box_percentage
+ *   J = unit_session_percentage
+ */
+function refreshDailyDumpData(country, configKey) {
+  try {
+    var config = getSupabaseConfig();
+    var marketplaceId = config.marketplaces[configKey];
+
+    if (!marketplaceId) {
+      throw new Error(country + ' marketplace ID not found in Script Config!');
+    }
+
+    SpreadsheetApp.getActiveSpreadsheet().toast('Fetching ' + country + ' daily data (35 days)...', 'Please wait', 60);
+
+    // Calculate date range: last 35 days
+    var now = new Date();
+    var daysBack = new Date(now.getTime() - 35 * 24 * 60 * 60 * 1000);
+    var startDate = daysBack.getFullYear() + '-' +
+      String(daysBack.getMonth() + 1).padStart(2, '0') + '-' +
+      String(daysBack.getDate()).padStart(2, '0');
+
+    // Use deduped view (prefers S&T over orders, avoids double-counting)
+    var url = config.url + '/rest/v1/sp_daily_asin_data_deduped?' +
+      'marketplace_id=eq.' + marketplaceId +
+      '&date=gte.' + startDate +
+      '&select=child_asin,date,units_ordered,units_ordered_b2b,ordered_product_sales,ordered_product_sales_b2b,sessions,page_views,buy_box_percentage,unit_session_percentage' +
+      '&order=child_asin.asc,date.asc';
+
+    Logger.log('Fetching daily dump data since ' + startDate);
+    var data = fetchAllFromSupabase(url, config);
+    Logger.log('Fetched ' + data.length + ' daily rows');
+
+    // Headers
+    var headers = [
+      'child_asin', 'date',
+      'units_ordered', 'units_ordered_b2b',
+      'ordered_product_sales', 'ordered_product_sales_b2b',
+      'sessions', 'page_views',
+      'buy_box_percentage', 'unit_session_percentage'
+    ];
+
+    var sheet = getOrCreateDumpSheet('SP Daily', country, headers);
+
+    // Clear existing data (keep headers)
+    var lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      sheet.getRange(2, 1, lastRow - 1, headers.length).clear();
+    }
+
+    // Build output
+    var output = [];
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      output.push([
+        r.child_asin || '',
+        r.date || '',
+        r.units_ordered || 0,
+        r.units_ordered_b2b || 0,
+        parseFloat(r.ordered_product_sales) || 0,
+        parseFloat(r.ordered_product_sales_b2b) || 0,
+        r.sessions || 0,
+        r.page_views || 0,
+        parseFloat(r.buy_box_percentage) || 0,
+        parseFloat(r.unit_session_percentage) || 0
+      ]);
+    }
+
+    if (output.length > 0) {
+      sheet.getRange(2, 1, output.length, headers.length).setValues(output);
+    }
+
+    Logger.log('SP Daily ' + country + ': ' + output.length + ' rows');
+
+  } catch (e) {
+    Logger.log('Error refreshing SP Daily ' + country + ': ' + e.message + '\n' + e.stack);
+    throw e;
+  }
+}
+
+// ============================================
 // TRIGGER-SAFE PER-COUNTRY FUNCTIONS
 // ============================================
 // Each function refreshes ONE data type for ONE country.
 // Google Apps Script 6-min limit means we CANNOT do everything in one run.
 //
 // Naming: trigger_{COUNTRY}_{TYPE}
-//   TYPE: sales, rolling, inventory, fees
+//   TYPE: sales, rolling, inventory, fees, daily
 //
 // Set up time-based triggers on these (staggered 3-5 min apart).
 // Use "Setup Triggers" from menu to auto-create all of them.
@@ -850,60 +947,70 @@ function trigger_US_sales()     { refreshSPData('US', 'US'); }
 function trigger_US_rolling()   { refreshRollingData('US', 'US'); }
 function trigger_US_inventory() { refreshInventoryData('US', 'US'); }
 function trigger_US_fees()      { refreshFeesData('US', 'US'); }
+function trigger_US_daily()     { refreshDailyDumpData('US', 'US'); }
 
 // --- CA ---
 function trigger_CA_sales()     { refreshSPData('CA', 'CA'); }
 function trigger_CA_rolling()   { refreshRollingData('CA', 'CA'); }
 function trigger_CA_inventory() { refreshInventoryData('CA', 'CA'); }
 function trigger_CA_fees()      { refreshFeesData('CA', 'CA'); }
+function trigger_CA_daily()     { refreshDailyDumpData('CA', 'CA'); }
 
 // --- MX ---
 function trigger_MX_sales()     { refreshSPData('MX', 'MX'); }
 function trigger_MX_rolling()   { refreshRollingData('MX', 'MX'); }
 function trigger_MX_inventory() { refreshInventoryData('MX', 'MX'); }
 function trigger_MX_fees()      { refreshFeesData('MX', 'MX'); }
+function trigger_MX_daily()     { refreshDailyDumpData('MX', 'MX'); }
 
 // --- UK ---
 function trigger_UK_sales()     { refreshSPData('UK', 'UK'); }
 function trigger_UK_rolling()   { refreshRollingData('UK', 'UK'); }
 function trigger_UK_inventory() { refreshInventoryData('UK', 'UK'); }
 function trigger_UK_fees()      { refreshFeesData('UK', 'UK'); }
+function trigger_UK_daily()     { refreshDailyDumpData('UK', 'UK'); }
 
 // --- DE ---
 function trigger_DE_sales()     { refreshSPData('DE', 'DE'); }
 function trigger_DE_rolling()   { refreshRollingData('DE', 'DE'); }
 function trigger_DE_inventory() { refreshInventoryData('DE', 'DE'); }
 function trigger_DE_fees()      { refreshFeesData('DE', 'DE'); }
+function trigger_DE_daily()     { refreshDailyDumpData('DE', 'DE'); }
 
 // --- FR ---
 function trigger_FR_sales()     { refreshSPData('FR', 'FR'); }
 function trigger_FR_rolling()   { refreshRollingData('FR', 'FR'); }
 function trigger_FR_inventory() { refreshInventoryData('FR', 'FR'); }
 function trigger_FR_fees()      { refreshFeesData('FR', 'FR'); }
+function trigger_FR_daily()     { refreshDailyDumpData('FR', 'FR'); }
 
 // --- IT ---
 function trigger_IT_sales()     { refreshSPData('IT', 'IT'); }
 function trigger_IT_rolling()   { refreshRollingData('IT', 'IT'); }
 function trigger_IT_inventory() { refreshInventoryData('IT', 'IT'); }
 function trigger_IT_fees()      { refreshFeesData('IT', 'IT'); }
+function trigger_IT_daily()     { refreshDailyDumpData('IT', 'IT'); }
 
 // --- ES ---
 function trigger_ES_sales()     { refreshSPData('ES', 'ES'); }
 function trigger_ES_rolling()   { refreshRollingData('ES', 'ES'); }
 function trigger_ES_inventory() { refreshInventoryData('ES', 'ES'); }
 function trigger_ES_fees()      { refreshFeesData('ES', 'ES'); }
+function trigger_ES_daily()     { refreshDailyDumpData('ES', 'ES'); }
 
 // --- AU ---
 function trigger_AU_sales()     { refreshSPData('AU', 'AU'); }
 function trigger_AU_rolling()   { refreshRollingData('AU', 'AU'); }
 function trigger_AU_inventory() { refreshInventoryData('AU', 'AU'); }
 function trigger_AU_fees()      { refreshFeesData('AU', 'AU'); }
+function trigger_AU_daily()     { refreshDailyDumpData('AU', 'AU'); }
 
 // --- UAE ---
 function trigger_UAE_sales()     { refreshSPData('UAE', 'UAE'); }
 function trigger_UAE_rolling()   { refreshRollingData('UAE', 'UAE'); }
 function trigger_UAE_inventory() { refreshInventoryData('UAE', 'UAE'); }
 function trigger_UAE_fees()      { refreshFeesData('UAE', 'UAE'); }
+function trigger_UAE_daily()     { refreshDailyDumpData('UAE', 'UAE'); }
 
 // ============================================
 // AUTO-SETUP TRIGGERS
@@ -936,8 +1043,8 @@ function setupDailyTriggers() {
     'Setup Daily Triggers',
     'This will create daily triggers for ' + countries.length + ' marketplaces:\n' +
     countries.join(', ') + '\n\n' +
-    '4 triggers per country (sales, rolling, inventory, fees)\n' +
-    'Total: ' + (countries.length * 4) + ' triggers\n' +
+    '5 triggers per country (sales, rolling, inventory, fees, daily)\n' +
+    'Total: ' + (countries.length * 5) + ' triggers\n' +
     'Staggered 3 min apart starting at 6:00 AM\n\n' +
     'Any existing "trigger_" triggers will be deleted first.\n\n' +
     'Continue?',
@@ -957,7 +1064,7 @@ function setupDailyTriggers() {
   Logger.log('Deleted ' + deleted + ' existing triggers');
 
   // Data types for each country
-  var types = ['sales', 'rolling', 'inventory', 'fees'];
+  var types = ['sales', 'rolling', 'inventory', 'fees', 'daily'];
   var startHour = 6;
   var startMinute = 0;
   var created = 0;
@@ -1016,7 +1123,7 @@ function removeAllTriggers() {
 
 /**
  * Manual run: refresh one country at a time from menu.
- * Runs all 4 data types sequentially for the selected country.
+ * Runs all 5 data types sequentially for the selected country.
  */
 function refreshOneCountry() {
   var ui = SpreadsheetApp.getUi();
@@ -1043,11 +1150,12 @@ function refreshOneCountry() {
     { name: 'Sales', fn: function() { refreshSPData(country, country); } },
     { name: 'Rolling', fn: function() { refreshRollingData(country, country); } },
     { name: 'Inventory', fn: function() { refreshInventoryData(country, country); } },
-    { name: 'Fees', fn: function() { refreshFeesData(country, country); } }
+    { name: 'Fees', fn: function() { refreshFeesData(country, country); } },
+    { name: 'Daily', fn: function() { refreshDailyDumpData(country, country); } }
   ];
 
   for (var i = 0; i < steps.length; i++) {
-    ss.toast('(' + (i + 1) + '/4) ' + country + ' ' + steps[i].name + '...', 'Refreshing', 120);
+    ss.toast('(' + (i + 1) + '/5) ' + country + ' ' + steps[i].name + '...', 'Refreshing', 120);
     try {
       steps[i].fn();
     } catch (e) {
@@ -1058,7 +1166,7 @@ function refreshOneCountry() {
   if (errors.length > 0) {
     ui.alert(country + ' refresh done with errors:\n\n' + errors.join('\n'));
   } else {
-    ui.alert(country + ' — all 4 data types refreshed!');
+    ui.alert(country + ' — all 5 data types refreshed!');
   }
 }
 
@@ -1075,6 +1183,160 @@ function _safeAlert(message) {
 }
 
 // ============================================
+// DUPLICATE COUNTRY TAB
+// ============================================
+
+/**
+ * Duplicates a country tab (e.g., USA) to a new country.
+ * Copies the sheet, renames it, and replaces all dump sheet references
+ * in formulas so they point to the new country's dump sheets.
+ *
+ * Example: Duplicating "USA" for "CA" will replace all instances of:
+ *   'SP Data US'   → 'SP Data CA'
+ *   'SP Daily US'  → 'SP Daily CA'
+ *   'SP Rolling US' → 'SP Rolling CA'
+ *   'SP Inventory US' → 'SP Inventory CA'
+ *   'SP Fees US'   → 'SP Fees CA'
+ *
+ * Also updates A2 (marketplace UUID) and B2 (country code).
+ */
+function duplicateCountryTab() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Prompt for source tab
+  var sourceResponse = ui.prompt(
+    'Duplicate Country Tab',
+    'Enter the SOURCE tab name to copy from (e.g., "USA"):',
+    ui.ButtonSet.OK_CANCEL);
+  if (sourceResponse.getSelectedButton() !== ui.Button.OK) return;
+
+  var sourceTabName = sourceResponse.getResponseText().trim();
+  var sourceSheet = ss.getSheetByName(sourceTabName);
+  if (!sourceSheet) {
+    ui.alert('Tab "' + sourceTabName + '" not found!');
+    return;
+  }
+
+  // Get source country code from B2
+  var sourceCountry = String(sourceSheet.getRange('B2').getValue()).trim();
+  if (!sourceCountry) {
+    ui.alert('No country code found in B2 of "' + sourceTabName + '"!');
+    return;
+  }
+
+  // Prompt for target country
+  var targetResponse = ui.prompt(
+    'Target Country',
+    'Enter the TARGET country code (e.g., CA, UK, DE, FR, IT, ES, MX, AU, UAE):\n\n' +
+    'Source tab: ' + sourceTabName + ' (country: ' + sourceCountry + ')',
+    ui.ButtonSet.OK_CANCEL);
+  if (targetResponse.getSelectedButton() !== ui.Button.OK) return;
+
+  var targetCountry = targetResponse.getResponseText().trim().toUpperCase();
+  if (targetCountry === sourceCountry) {
+    ui.alert('Target country is the same as source!');
+    return;
+  }
+
+  // Get target marketplace UUID from config
+  var config = getSupabaseConfig();
+  var targetMarketplaceId = config.marketplaces[targetCountry];
+  if (!targetMarketplaceId) {
+    ui.alert('Country "' + targetCountry + '" not found in Script Config!\n\n' +
+      'Available: ' + Object.keys(config.marketplaces).join(', ') + '\n\n' +
+      'Add the marketplace UUID to Script Config first.');
+    return;
+  }
+
+  // Country code to display name mapping
+  var countryNames = {
+    'US': 'USA', 'CA': 'Canada', 'MX': 'Mexico',
+    'UK': 'UK', 'DE': 'Germany', 'FR': 'France',
+    'IT': 'Italy', 'ES': 'Spain',
+    'AU': 'Australia', 'UAE': 'UAE'
+  };
+  var targetTabName = countryNames[targetCountry] || targetCountry;
+
+  // Check if target tab already exists
+  if (ss.getSheetByName(targetTabName)) {
+    var overwrite = ui.alert(
+      'Tab "' + targetTabName + '" already exists!',
+      'Do you want to delete it and create a fresh copy?',
+      ui.ButtonSet.YES_NO);
+    if (overwrite !== ui.Button.YES) return;
+    ss.deleteSheet(ss.getSheetByName(targetTabName));
+  }
+
+  // Verify dump sheets exist for target country
+  var dumpPrefixes = ['SP Data', 'SP Daily', 'SP Rolling', 'SP Inventory', 'SP Fees'];
+  var missingDumps = [];
+  for (var d = 0; d < dumpPrefixes.length; d++) {
+    var dumpName = dumpPrefixes[d] + ' ' + targetCountry;
+    if (!ss.getSheetByName(dumpName)) {
+      missingDumps.push(dumpName);
+    }
+  }
+
+  if (missingDumps.length > 0) {
+    var proceed = ui.alert(
+      'Missing dump sheets for ' + targetCountry + ':\n\n' +
+      missingDumps.join('\n') + '\n\n' +
+      'Run "Refresh One Country" for ' + targetCountry + ' first to create them.\n\n' +
+      'Continue anyway? (formulas will show errors until dump sheets exist)',
+      ui.ButtonSet.YES_NO);
+    if (proceed !== ui.Button.YES) return;
+  }
+
+  ss.toast('Duplicating ' + sourceTabName + ' → ' + targetTabName + '...', 'Please wait', 60);
+
+  // Duplicate the sheet
+  var newSheet = sourceSheet.copyTo(ss);
+  newSheet.setName(targetTabName);
+
+  // Update A2 (marketplace UUID) and B2 (country code)
+  newSheet.getRange('A2').setValue(targetMarketplaceId);
+  newSheet.getRange('B2').setValue(targetCountry);
+
+  // Replace dump sheet references in all formulas
+  var dataRange = newSheet.getDataRange();
+  var formulas = dataRange.getFormulas();
+  var numRows = formulas.length;
+  var numCols = formulas[0].length;
+  var replacementCount = 0;
+
+  for (var row = 0; row < numRows; row++) {
+    for (var col = 0; col < numCols; col++) {
+      var formula = formulas[row][col];
+      if (!formula) continue;
+
+      var newFormula = formula;
+      for (var p = 0; p < dumpPrefixes.length; p++) {
+        var oldRef = dumpPrefixes[p] + ' ' + sourceCountry;
+        var newRef = dumpPrefixes[p] + ' ' + targetCountry;
+        // Replace both with and without quotes (Google Sheets may use either)
+        newFormula = newFormula.split("'" + oldRef + "'").join("'" + newRef + "'");
+        newFormula = newFormula.split(oldRef).join(newRef);
+      }
+
+      if (newFormula !== formula) {
+        newSheet.getRange(row + 1, col + 1).setFormula(newFormula);
+        replacementCount++;
+      }
+    }
+  }
+
+  ui.alert('Done!\n\n' +
+    'Created tab: ' + targetTabName + '\n' +
+    'Country: ' + targetCountry + '\n' +
+    'Marketplace: ' + targetMarketplaceId.substring(0, 8) + '...\n' +
+    'Formulas updated: ' + replacementCount + '\n\n' +
+    (missingDumps.length > 0 ?
+      'NOTE: Some dump sheets are missing. Run "Refresh One Country" for ' + targetCountry + ' to create them.' :
+      'All dump sheets found. Formulas should be pulling data.'));
+}
+
+// ============================================
 // MENU
 // ============================================
 
@@ -1082,6 +1344,7 @@ function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('Supabase Data')
     .addItem('Refresh One Country...', 'refreshOneCountry')
+    .addItem('Duplicate Country Tab...', 'duplicateCountryTab')
     .addSeparator()
     .addSubMenu(ui.createMenu('Automation')
       .addItem('Setup Daily Triggers', 'setupDailyTriggers')
@@ -1368,40 +1631,96 @@ function showFormulaExamples() {
   var examples =
     'FORMULA EXAMPLES FOR SUPABASE DATA SHEETS\n' +
     '═══════════════════════════════════════\n\n' +
-    'SP DATA COLUMNS (Sales Weekly/Monthly):\n' +
-    'A=data_type B=child_asin C=period D=units E=units_b2b\n' +
+    'SETUP: A2 = marketplace UUID, B2 = country code (US)\n' +
+    'ASIN column = $C5 (manually maintained)\n' +
+    'Date headers in row 4\n' +
+    'Replace "US" with your country code in sheet names\n\n' +
+
+    '── SP DATA (Weekly/Monthly) ──\n' +
+    'Cols: A=data_type B=child_asin C=period D=units E=units_b2b\n' +
     'F=revenue G=revenue_b2b H=sessions I=page_views\n' +
     'J=avg_buy_box% K=avg_conversion%\n\n' +
 
-    'Monthly Units:\n' +
-    '=IFERROR(SUMIFS(\'SP Data USA\'!$D:$D, \'SP Data USA\'!$A:$A, "monthly", \'SP Data USA\'!$B:$B, $C5, \'SP Data USA\'!$C:$C, TEXT(BT$4,"yyyy-mm-dd")), 0)\n\n' +
+    'Monthly Units (row 4 = first-of-month date):\n' +
+    '=IFERROR(SUMIFS(\'SP Data US\'!$D:$D, \'SP Data US\'!$A:$A, "monthly", \'SP Data US\'!$B:$B, $C5, \'SP Data US\'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
 
-    'SP ROLLING COLUMNS (7/14/30/60 day):\n' +
-    'A=child_asin D=units_7d E=revenue_7d F=avg_units_7d\n' +
-    'G=sessions_7d H=conversion_7d (same pattern for 14/30/60)\n\n' +
+    'Monthly Revenue:\n' +
+    '=IFERROR(SUMIFS(\'SP Data US\'!$F:$F, \'SP Data US\'!$A:$A, "monthly", \'SP Data US\'!$B:$B, $C5, \'SP Data US\'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
 
-    'Rolling 30-day Units:\n' +
-    '=IFERROR(INDEX(\'SP Rolling USA\'!$N:$N, MATCH($C5, \'SP Rolling USA\'!$A:$A, 0)), 0)\n\n' +
+    'Monthly Sessions:\n' +
+    '=IFERROR(SUMIFS(\'SP Data US\'!$H:$H, \'SP Data US\'!$A:$A, "monthly", \'SP Data US\'!$B:$B, $C5, \'SP Data US\'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
 
-    'SP INVENTORY COLUMNS:\n' +
-    'A=asin B=sku C=product_name D=fba_fulfillable E=fba_local F=fba_remote\n' +
-    'G=fba_reserved H-J=fba_inbound(working/shipped/receiving)\n' +
-    'K=fba_unsellable L=fba_total M=awd_onhand N=awd_inbound O=awd_available P=awd_total\n' +
-    '(fba_local/fba_remote are EU Pan-European FBA columns; AWD is NA only)\n\n' +
+    'Monthly Conversion Rate:\n' +
+    '=IFERROR(SUMIFS(\'SP Data US\'!$K:$K, \'SP Data US\'!$A:$A, "monthly", \'SP Data US\'!$B:$B, $C5, \'SP Data US\'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
 
-    'FBA Fulfillable:\n' +
-    '=IFERROR(INDEX(\'SP Inventory USA\'!$D:$D, MATCH($C5, \'SP Inventory USA\'!$A:$A, 0)), 0)\n\n' +
+    'Weekly Units (row 4 = Sunday date, Amazon weeks = Sun-Sat):\n' +
+    '=IFERROR(SUMIFS(\'SP Data US\'!$D:$D, \'SP Data US\'!$A:$A, "weekly", \'SP Data US\'!$B:$B, $C5, \'SP Data US\'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
 
-    'SP FEES COLUMNS:\n' +
-    'A=asin B=sku C=size_tier D=price E=est_fee_total\n' +
+    'Daily Average (from monthly units):\n' +
+    '=IFERROR(G5 / DAY(EOMONTH(G$4, 0)), 0)\n\n' +
+
+    '── SP DAILY (Last 35 days) ──\n' +
+    'Cols: A=child_asin B=date C=units D=units_b2b\n' +
+    'E=revenue F=revenue_b2b G=sessions H=page_views\n' +
+    'I=buy_box% J=conversion%\n\n' +
+
+    'Daily Units (row 4 = exact date):\n' +
+    '=IFERROR(SUMIFS(\'SP Daily US\'!$C:$C, \'SP Daily US\'!$A:$A, $C5, \'SP Daily US\'!$B:$B, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
+
+    'Daily Revenue:\n' +
+    '=IFERROR(SUMIFS(\'SP Daily US\'!$E:$E, \'SP Daily US\'!$A:$A, $C5, \'SP Daily US\'!$B:$B, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
+
+    '── SP ROLLING (7/14/30/60 day) ──\n' +
+    'Cols: A=child_asin B=parent_asin C=currency\n' +
+    '7d: D=units E=revenue F=avg_units G=sessions H=conversion\n' +
+    '14d: I-M | 30d: N-R | 60d: S-W\n\n' +
+
+    'Units Last 7 Days:\n' +
+    '=IFERROR(INDEX(\'SP Rolling US\'!$D:$D, MATCH($C5, \'SP Rolling US\'!$A:$A, 0)), 0)\n\n' +
+
+    'Avg Daily Units (30d):\n' +
+    '=IFERROR(INDEX(\'SP Rolling US\'!$P:$P, MATCH($C5, \'SP Rolling US\'!$A:$A, 0)), 0)\n\n' +
+
+    'Sessions Last 30 Days:\n' +
+    '=IFERROR(INDEX(\'SP Rolling US\'!$Q:$Q, MATCH($C5, \'SP Rolling US\'!$A:$A, 0)), 0)\n\n' +
+
+    '── SP INVENTORY ──\n' +
+    'Cols: A=asin B=sku C=product_name D=fba_fulfillable\n' +
+    'E=fba_local F=fba_remote G=fba_reserved\n' +
+    'H-J=fba_inbound(working/shipped/receiving)\n' +
+    'K=fba_unsellable L=fba_total\n' +
+    'M=awd_onhand N=awd_inbound O=awd_available P=awd_total\n\n' +
+
+    'FBA Fulfillable (use SUMIFS for multi-SKU ASINs):\n' +
+    '=IFERROR(SUMIFS(\'SP Inventory US\'!$D:$D, \'SP Inventory US\'!$A:$A, $C5), 0)\n\n' +
+
+    'FBA Total:\n' +
+    '=IFERROR(SUMIFS(\'SP Inventory US\'!$L:$L, \'SP Inventory US\'!$A:$A, $C5), 0)\n\n' +
+
+    'AWD On-hand:\n' +
+    '=IFERROR(SUMIFS(\'SP Inventory US\'!$M:$M, \'SP Inventory US\'!$A:$A, $C5), 0)\n\n' +
+
+    'Product Name:\n' +
+    '=IFERROR(INDEX(\'SP Inventory US\'!$C:$C, MATCH($C5, \'SP Inventory US\'!$A:$A, 0)), "")\n\n' +
+
+    '── SP FEES ──\n' +
+    'Cols: A=asin B=sku C=size_tier D=price E=est_fee_total\n' +
     'F=est_referral G=est_fba_fee H=settle_avg_fba I=settle_avg_referral\n' +
     'J=settle_qty_basis K=storage_fee L=storage_avg_qty\n\n' +
 
-    'Per-Unit FBA Fee (estimated):\n' +
-    '=IFERROR(INDEX(\'SP Fees USA\'!$G:$G, MATCH($C5, \'SP Fees USA\'!$A:$A, 0)), 0)\n\n' +
+    'Estimated Total Fee:\n' +
+    '=IFERROR(INDEX(\'SP Fees US\'!$E:$E, MATCH($C5, \'SP Fees US\'!$A:$A, 0)), 0)\n\n' +
 
-    'Per-Unit FBA Fee (actual from settlements):\n' +
-    '=ABS(IFERROR(INDEX(\'SP Fees USA\'!$H:$H, MATCH($C5, \'SP Fees USA\'!$A:$A, 0)), 0))';
+    'Actual FBA Fee (from settlements, as positive):\n' +
+    '=ABS(IFERROR(INDEX(\'SP Fees US\'!$H:$H, MATCH($C5, \'SP Fees US\'!$A:$A, 0)), 0))\n\n' +
+
+    'Storage Fee:\n' +
+    '=IFERROR(INDEX(\'SP Fees US\'!$K:$K, MATCH($C5, \'SP Fees US\'!$A:$A, 0)), 0)\n\n' +
+
+    '── DUPLICATING TO OTHER COUNTRIES ──\n' +
+    'Use menu: Supabase Data → Duplicate Country Tab...\n' +
+    'It copies the tab, replaces all "US" refs with target country,\n' +
+    'and updates A2/B2 automatically.';
 
   SpreadsheetApp.getUi().alert(examples);
 }

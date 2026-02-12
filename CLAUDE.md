@@ -124,7 +124,7 @@ Full schema details: `Documentation/database-schema.md`
 - **Phase 4**: Product master table + COGS entry (via Google Sheets)
 - **Phase 5**: CM1/CM2 calculation views (settlements + COGS + POP ad spend)
 - **Phase 6**: Web dashboard
-- **Google Sheets formula refinement**: Verify fee data against GorillaROI; trigger automation deployed (all 10 countries), needs user to add marketplace UUIDs to Script Config sheet for UK/DE/FR/IT/ES/AU/UAE
+- **Google Sheets — re-evaluate approach**: Current `supabase_sales.gs` has 40 per-country per-data-type triggers but needs architectural review. Next session: plan sheet structure, decide what data goes where, find a better approach for handling 10 countries × multiple data types within GAS 6-min limits. User needs to add marketplace UUIDs to Script Config for UK/DE/FR/IT/ES/AU/UAE before testing.
 
 ## Downstream Consumer: Chalkola ONE
 
