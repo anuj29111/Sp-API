@@ -1,47 +1,77 @@
 /**
- * Supabase Sales Data Integration
- * Pulls daily sales, weekly/monthly aggregates, rolling averages,
- * inventory snapshots, and per-unit fee data from Supabase.
+ * Supabase Sales Data Integration — USA First
  *
- * All configuration is read from the "Script Config" sheet - NO HARDCODING.
+ * Pulls Amazon data from Supabase into Google Sheets "dump sheets",
+ * which country tabs then reference via SUMIFS / INDEX-MATCH formulas.
  *
- * Dump Sheets:
- *   SP Data {country}      - Weekly/Monthly sales + traffic
- *   SP Rolling {country}   - Rolling 7/14/30/60 day metrics
- *   SP Inventory {country} - Latest FBA + AWD inventory snapshot
- *   SP Fees {country}      - Per-unit fee estimates + settlement actuals + storage
+ * ALL configuration is read from the "Script Config" sheet — NO HARDCODING.
+ *
+ * === HOW IT WORKS ===
+ *
+ * 1. Script Config sheet has: Supabase URL, Anon Key, Marketplace IDs
+ * 2. Script pulls data from Supabase → writes to 5 dump sheets per country
+ * 3. Country tab (e.g., USA) has SUMIFS formulas that read from dump sheets
+ * 4. Formulas use cell references for ASIN ($C5) and date (G$4) — nothing hardcoded
+ *
+ * === 5 DUMP SHEETS (per country) ===
+ *
+ * SP Data {country}      — Monthly & weekly aggregates (27+ months of history)
+ * SP Daily {country}     — Last 35 days of daily per-ASIN data
+ * SP Rolling {country}   — Rolling 7/14/30/60-day averages (one row per ASIN)
+ * SP Inventory {country} — Latest FBA + AWD inventory snapshot
+ * SP Fees {country}      — Fee estimates + settlement actuals + storage fees
+ *
+ * === 5 TRIGGERS (per country) ===
+ *
+ * Each dump sheet gets its own trigger because Google Apps Script
+ * has a 6-minute execution limit per run. One trigger = one dump sheet.
+ *
+ * Currently set up: USA only (5 triggers).
+ * When ready for more countries: add trigger functions + run Setup Triggers.
  */
+
 
 // ============================================
 // CONFIGURATION
 // ============================================
 
 /**
- * Reads Supabase configuration from the Script Config sheet
+ * Reads Supabase config from the "Script Config" sheet.
+ *
+ * Expected layout:
+ *   Column A = Setting Name
+ *   Column B = Parameter
+ *   Column C = Value
+ *
+ * Looks for:
+ *   "SUPABASE SETTINGS" header row
+ *   "Supabase URL" | "All" | https://xxx.supabase.co
+ *   "Supabase Anon Key" | "All" | eyJhbGci...
+ *   "Marketplace ID" | "US" | f47ac10b-58cc-4372-...
  */
 function getSupabaseConfig() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const configSheet = ss.getSheetByName('Script Config');
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var configSheet = ss.getSheetByName('Script Config');
 
   if (!configSheet) {
     throw new Error('Script Config sheet not found!');
   }
 
-  const data = configSheet.getDataRange().getValues();
+  var data = configSheet.getDataRange().getValues();
 
-  const config = {
+  var config = {
     url: null,
     anonKey: null,
     marketplaces: {}
   };
 
-  let inSupabaseSection = false;
+  var inSupabaseSection = false;
 
-  for (let i = 0; i < data.length; i++) {
-    const row = data[i];
-    const settingName = String(row[0]).trim();
-    const parameter = String(row[1]).trim();
-    const value = String(row[2]).trim();
+  for (var i = 0; i < data.length; i++) {
+    var row = data[i];
+    var settingName = String(row[0]).trim();
+    var parameter = String(row[1]).trim();
+    var value = String(row[2]).trim();
 
     if (settingName === 'SUPABASE SETTINGS') {
       inSupabaseSection = true;
@@ -71,25 +101,26 @@ function getSupabaseConfig() {
   return config;
 }
 
+
 // ============================================
-// SUPABASE API - CORE FETCH HELPERS
+// SUPABASE API — FETCH HELPERS
 // ============================================
 
 /**
- * Makes a GET request to Supabase REST API (single page, max 1000 rows)
+ * Single-page fetch (max 1000 rows).
  */
 function fetchFromSupabase(endpoint, params, config) {
-  let url = config.url + endpoint + '?';
+  var url = config.url + endpoint + '?';
 
-  const queryParts = [];
-  for (const key in params) {
+  var queryParts = [];
+  for (var key in params) {
     queryParts.push(encodeURIComponent(key) + '=' + encodeURIComponent(params[key]));
   }
   url += queryParts.join('&');
 
   Logger.log('Fetching: ' + url.substring(0, 120) + '...');
 
-  const options = {
+  var options = {
     method: 'GET',
     headers: {
       'apikey': config.anonKey,
@@ -99,8 +130,8 @@ function fetchFromSupabase(endpoint, params, config) {
     muteHttpExceptions: true
   };
 
-  const response = UrlFetchApp.fetch(url, options);
-  const responseCode = response.getResponseCode();
+  var response = UrlFetchApp.fetch(url, options);
+  var responseCode = response.getResponseCode();
 
   if (responseCode !== 200 && responseCode !== 206) {
     Logger.log('Supabase API Error ' + responseCode + ': ' + response.getContentText());
@@ -111,14 +142,9 @@ function fetchFromSupabase(endpoint, params, config) {
 }
 
 /**
- * Fetches ALL rows from Supabase with automatic pagination.
- * Supabase REST API returns max 1000 rows by default.
+ * Paginated fetch — gets ALL rows automatically.
+ * Supabase REST API returns max 1000 per page.
  * Uses Range header for offset-based pagination.
- *
- * @param {string} fullUrl - Complete URL with query params (no Range header yet)
- * @param {Object} config - Supabase config
- * @param {number} pageSize - Rows per page (default 1000)
- * @returns {Array} All rows combined
  */
 function fetchAllFromSupabase(fullUrl, config, pageSize) {
   pageSize = pageSize || 1000;
@@ -143,7 +169,6 @@ function fetchAllFromSupabase(fullUrl, config, pageSize) {
     var response = UrlFetchApp.fetch(fullUrl, options);
     var responseCode = response.getResponseCode();
 
-    // 200 = all rows fit in one page, 206 = partial content (more pages)
     if (responseCode !== 200 && responseCode !== 206) {
       Logger.log('Supabase API Error ' + responseCode + ': ' + response.getContentText());
       throw new Error('Supabase API error: ' + responseCode);
@@ -161,15 +186,8 @@ function fetchAllFromSupabase(fullUrl, config, pageSize) {
       }
     }
 
-    // If we got fewer rows than page size, we're done
-    if (pageData.length < pageSize) {
-      break;
-    }
-
-    // If we know total and have fetched all, we're done
-    if (totalCount && allRows.length >= totalCount) {
-      break;
-    }
+    if (pageData.length < pageSize) break;
+    if (totalCount && allRows.length >= totalCount) break;
 
     offset += pageSize;
     Logger.log('Paginating: fetched ' + allRows.length + (totalCount ? '/' + totalCount : '') + ' rows...');
@@ -179,33 +197,12 @@ function fetchAllFromSupabase(fullUrl, config, pageSize) {
   return allRows;
 }
 
-// ============================================
-// DATA FETCHING - DAILY
-// ============================================
-
-/**
- * Fetches daily data with proper date filtering using AND logic
- */
-function getDailyDataBetweenDates(marketplaceId, startDate, endDate, config) {
-  var url = config.url + '/rest/v1/sp_daily_asin_data?' +
-    'marketplace_id=eq.' + marketplaceId +
-    '&date=gte.' + startDate +
-    '&date=lte.' + endDate +
-    '&select=date,child_asin,parent_asin,units_ordered,units_ordered_b2b,ordered_product_sales,ordered_product_sales_b2b,sessions,page_views,buy_box_percentage,unit_session_percentage' +
-    '&order=date.desc,child_asin.asc';
-
-  Logger.log('Fetching daily data: ' + startDate + ' to ' + endDate);
-  return fetchAllFromSupabase(url, config);
-}
 
 // ============================================
-// DATA FETCHING - WEEKLY/MONTHLY (with pagination fix)
+// DATA FETCHERS (Supabase → raw arrays)
 // ============================================
 
-/**
- * Fetches monthly data from materialized view.
- * @param {string} sinceDate - Optional. Only fetch months >= this date (YYYY-MM-DD). If null, fetches all.
- */
+/** Monthly data from materialized view */
 function getMonthlyDataFromView(marketplaceId, config, sinceDate) {
   var url = config.url + '/rest/v1/sp_monthly_asin_data?' +
     'marketplace_id=eq.' + marketplaceId +
@@ -217,10 +214,7 @@ function getMonthlyDataFromView(marketplaceId, config, sinceDate) {
   return fetchAllFromSupabase(url, config);
 }
 
-/**
- * Fetches weekly data from materialized view.
- * @param {string} sinceDate - Optional. Only fetch weeks >= this date (YYYY-MM-DD). If null, fetches all.
- */
+/** Weekly data from materialized view */
 function getWeeklyDataFromView(marketplaceId, config, sinceDate) {
   var url = config.url + '/rest/v1/sp_weekly_asin_data?' +
     'marketplace_id=eq.' + marketplaceId +
@@ -232,38 +226,18 @@ function getWeeklyDataFromView(marketplaceId, config, sinceDate) {
   return fetchAllFromSupabase(url, config);
 }
 
-// ============================================
-// DATA FETCHING - ROLLING METRICS
-// ============================================
-
-/**
- * Fetches rolling 7/14/30/60-day metrics from materialized view
- */
+/** Rolling 7/14/30/60-day metrics */
 function getRollingMetrics(marketplaceId, config) {
   var url = config.url + '/rest/v1/sp_rolling_asin_metrics?' +
     'marketplace_id=eq.' + marketplaceId +
     '&select=child_asin,parent_asin,currency_code,units_last_7_days,revenue_last_7_days,avg_units_7_days,sessions_last_7_days,avg_conversion_7_days,units_last_14_days,revenue_last_14_days,avg_units_14_days,sessions_last_14_days,avg_conversion_14_days,units_last_30_days,revenue_last_30_days,avg_units_30_days,sessions_last_30_days,avg_conversion_30_days,units_last_60_days,revenue_last_60_days,avg_units_60_days,sessions_last_60_days,avg_conversion_60_days' +
     '&order=child_asin.asc';
 
-  Logger.log('Fetching rolling metrics');
   return fetchAllFromSupabase(url, config);
 }
 
-// ============================================
-// DATA FETCHING - INVENTORY
-// ============================================
-
-/**
- * Fetches FBA inventory for latest date
- */
+/** FBA inventory (latest date) */
 function getFBAInventoryLatest(marketplaceId, config) {
-  // First get the latest date
-  var dateUrl = config.url + '/rest/v1/sp_fba_inventory?' +
-    'marketplace_id=eq.' + marketplaceId +
-    '&select=date' +
-    '&order=date.desc' +
-    '&limit=1';
-
   var dateResult = fetchFromSupabase('/rest/v1/sp_fba_inventory', {
     'marketplace_id': 'eq.' + marketplaceId,
     'select': 'date',
@@ -279,7 +253,6 @@ function getFBAInventoryLatest(marketplaceId, config) {
   var latestDate = dateResult[0].date;
   Logger.log('FBA inventory latest date: ' + latestDate);
 
-  // Fetch all inventory for that date (includes EU EFN local/remote columns)
   var url = config.url + '/rest/v1/sp_fba_inventory?' +
     'marketplace_id=eq.' + marketplaceId +
     '&date=eq.' + latestDate +
@@ -289,11 +262,8 @@ function getFBAInventoryLatest(marketplaceId, config) {
   return fetchAllFromSupabase(url, config);
 }
 
-/**
- * Fetches AWD inventory for latest date
- */
+/** AWD inventory (latest date, NA only) */
 function getAWDInventoryLatest(marketplaceId, config) {
-  // First get the latest date
   var dateResult = fetchFromSupabase('/rest/v1/sp_awd_inventory', {
     'marketplace_id': 'eq.' + marketplaceId,
     'select': 'date',
@@ -309,7 +279,6 @@ function getAWDInventoryLatest(marketplaceId, config) {
   var latestDate = dateResult[0].date;
   Logger.log('AWD inventory latest date: ' + latestDate);
 
-  // Fetch all AWD inventory for that date
   var url = config.url + '/rest/v1/sp_awd_inventory?' +
     'marketplace_id=eq.' + marketplaceId +
     '&date=eq.' + latestDate +
@@ -319,9 +288,7 @@ function getAWDInventoryLatest(marketplaceId, config) {
   return fetchAllFromSupabase(url, config);
 }
 
-/**
- * Fetches SKU→ASIN mapping
- */
+/** SKU→ASIN mapping */
 function getSKUASINMap(marketplaceId, config) {
   var url = config.url + '/rest/v1/sp_sku_asin_map?' +
     'marketplace_id=eq.' + marketplaceId +
@@ -330,40 +297,27 @@ function getSKUASINMap(marketplaceId, config) {
   return fetchAllFromSupabase(url, config);
 }
 
-// ============================================
-// DATA FETCHING - FEES
-// ============================================
-
-/**
- * Fetches FBA fee estimates (current per-unit fees)
- */
+/** FBA fee estimates */
 function getFBAFeeEstimates(marketplaceId, config) {
   var url = config.url + '/rest/v1/sp_fba_fee_estimates?' +
     'marketplace_id=eq.' + marketplaceId +
     '&select=asin,sku,product_size_tier,your_price,estimated_fee_total,estimated_referral_fee_per_unit,estimated_pick_pack_fee_per_unit,estimated_weight_handling_fee_per_unit,currency_code' +
     '&order=asin.asc';
 
-  Logger.log('Fetching FBA fee estimates');
   return fetchAllFromSupabase(url, config);
 }
 
-/**
- * Fetches settlement-derived per-SKU average fees
- */
+/** Settlement-derived per-SKU average fees */
 function getSettlementFeesBySKU(marketplaceId, config) {
   var url = config.url + '/rest/v1/sp_settlement_fees_by_sku?' +
     'marketplace_id=eq.' + marketplaceId +
     '&select=sku,avg_fba_fee_per_unit,avg_referral_fee_per_unit,fba_fee_qty_basis,referral_fee_qty_basis';
 
-  Logger.log('Fetching settlement fees by SKU');
   return fetchAllFromSupabase(url, config);
 }
 
-/**
- * Fetches storage fees aggregated by ASIN for latest month
- */
+/** Storage fees by ASIN (latest month) */
 function getStorageFeesByASIN(marketplaceId, config) {
-  // First get the latest month
   var monthResult = fetchFromSupabase('/rest/v1/sp_storage_fees_by_asin', {
     'marketplace_id': 'eq.' + marketplaceId,
     'select': 'month',
@@ -387,16 +341,15 @@ function getStorageFeesByASIN(marketplaceId, config) {
   return fetchAllFromSupabase(url, config);
 }
 
+
 // ============================================
-// SHEET CREATORS
+// SHEET HELPER
 // ============================================
 
 /**
- * Gets or creates a dump sheet with headers
- * @param {string} prefix - Sheet name prefix (e.g., 'SP Data', 'SP Rolling')
- * @param {string} country - Country code (USA, CA, MX)
- * @param {Array} headers - Array of header strings
- * @returns {Sheet}
+ * Gets or creates a dump sheet with headers.
+ * Example: getOrCreateDumpSheet('SP Data', 'US', [...headers])
+ * Creates sheet named "SP Data US" if it doesn't exist.
  */
 function getOrCreateDumpSheet(prefix, country, headers) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -415,46 +368,28 @@ function getOrCreateDumpSheet(prefix, country, headers) {
   return sheet;
 }
 
-// Backward-compatible wrapper for SP Data sheets
-function getOrCreateSPDataSheet(country) {
-  var headers = [
-    'data_type', 'child_asin', 'period',
-    'units_ordered', 'units_ordered_b2b',
-    'ordered_product_sales', 'ordered_product_sales_b2b',
-    'sessions', 'page_views',
-    'avg_buy_box_percentage', 'avg_conversion_rate'
-  ];
-  return getOrCreateDumpSheet('SP Data', country, headers);
-}
 
 // ============================================
-// REFRESH: SP DATA (Weekly/Monthly)
+// REFRESH FUNCTION 1: SP DATA (Weekly/Monthly)
 // ============================================
+// Dump sheet: "SP Data {country}"
+// Columns: data_type | child_asin | period | units | units_b2b | revenue | revenue_b2b | sessions | page_views | buy_box% | conversion%
+// First run: fetches ALL history. Subsequent: incremental (last month + last 4 weeks).
 
-/**
- * Refreshes SP Data sheet for a marketplace.
- *
- * Layout: oldest at top (row 2), newest at bottom. Sorted by data_type then period ASC.
- *
- * FIRST RUN (empty sheet): fetches ALL history, writes sorted oldest→newest.
- *
- * SUBSEQUENT RUNS (incremental):
- *   1. Reads sheet to find the latest month and latest week already present
- *   2. Fetches only data >= previous month (monthly) and >= 4 weeks ago (weekly)
- *   3. Removes matching stale rows from the BOTTOM of the sheet (recent data zone)
- *   4. Appends fresh rows at the bottom
- *   Old data above the cutoff is NEVER read or touched.
- */
 function refreshSPData(country, configKey) {
   try {
     var config = getSupabaseConfig();
     var marketplaceId = config.marketplaces[configKey];
+    if (!marketplaceId) throw new Error(country + ' marketplace ID not found in Script Config!');
 
-    if (!marketplaceId) {
-      throw new Error(country + ' marketplace ID not found in Script Config!');
-    }
-
-    var sheet = getOrCreateSPDataSheet(country);
+    var headers = [
+      'data_type', 'child_asin', 'period',
+      'units_ordered', 'units_ordered_b2b',
+      'ordered_product_sales', 'ordered_product_sales_b2b',
+      'sessions', 'page_views',
+      'avg_buy_box_percentage', 'avg_conversion_rate'
+    ];
+    var sheet = getOrCreateDumpSheet('SP Data', country, headers);
     var lastRow = sheet.getLastRow();
     var isFirstRun = (lastRow <= 1);
 
@@ -472,20 +407,11 @@ function refreshSPData(country, configKey) {
       'Fetching ' + country + ' sales data' + (isFirstRun ? ' (full)' : ' (incremental)') + '...',
       'Please wait', 120);
 
-    // Fetch from Supabase
     var monthlyData = getMonthlyDataFromView(marketplaceId, config, isFirstRun ? null : monthlyCutoff);
     var weeklyData = getWeeklyDataFromView(marketplaceId, config, isFirstRun ? null : weeklyCutoff);
 
-    // Convert to sheet rows
-    function toMonthlyRow(r) {
-      return ['monthly', r.child_asin, r.month,
-        r.units_ordered || 0, r.units_ordered_b2b || 0,
-        r.ordered_product_sales || 0, r.ordered_product_sales_b2b || 0,
-        r.sessions || 0, r.page_views || 0,
-        r.avg_buy_box_percentage || 0, r.avg_conversion_rate || 0];
-    }
-    function toWeeklyRow(r) {
-      return ['weekly', r.child_asin, r.week_start,
+    function toRow(type, r, periodField) {
+      return [type, r.child_asin, r[periodField],
         r.units_ordered || 0, r.units_ordered_b2b || 0,
         r.ordered_product_sales || 0, r.ordered_product_sales_b2b || 0,
         r.sessions || 0, r.page_views || 0,
@@ -493,88 +419,127 @@ function refreshSPData(country, configKey) {
     }
 
     var freshRows = [];
-    for (var i = 0; i < monthlyData.length; i++) freshRows.push(toMonthlyRow(monthlyData[i]));
-    for (var j = 0; j < weeklyData.length; j++) freshRows.push(toWeeklyRow(weeklyData[j]));
+    for (var i = 0; i < monthlyData.length; i++) freshRows.push(toRow('monthly', monthlyData[i], 'month'));
+    for (var j = 0; j < weeklyData.length; j++) freshRows.push(toRow('weekly', weeklyData[j], 'week_start'));
 
-    // Sort: monthly first (by period ASC), then weekly (by period ASC)
+    // Sort: monthly first then weekly, oldest→newest within each
     freshRows.sort(function(a, b) {
-      if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1; // monthly before weekly
-      if (a[2] !== b[2]) return a[2] < b[2] ? -1 : 1; // period ASC (oldest first)
-      return (a[1] || '').localeCompare(b[1] || '');    // child_asin ASC
+      if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;
+      if (a[2] !== b[2]) return a[2] < b[2] ? -1 : 1;
+      return (a[1] || '').localeCompare(b[1] || '');
     });
 
     if (isFirstRun) {
-      // === FIRST RUN: write everything sorted ===
       if (freshRows.length > 0) {
         sheet.getRange(2, 1, freshRows.length, 11).setValues(freshRows);
       }
       Logger.log('SP Data ' + country + ' (full): ' + freshRows.length + ' rows');
-
     } else {
-      // === INCREMENTAL: trim stale recent rows, append fresh ===
-
-      // Build lookup of fresh keys to know what we're replacing
+      // Incremental: remove stale rows that match fresh data, then append
       var freshKeys = {};
       for (var f = 0; f < freshRows.length; f++) {
         freshKeys[freshRows[f][0] + '|' + freshRows[f][2] + '|' + freshRows[f][1]] = true;
       }
 
-      // Scan sheet from bottom up to find where recent data starts
-      // Recent = any row with period >= our cutoff dates
-      // We only need to read/modify the tail of the sheet
       var existingData = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
-
-      // Keep rows that are NOT being replaced by fresh data
       var keptRows = [];
-      var removedCount = 0;
       for (var e = 0; e < existingData.length; e++) {
         var key = String(existingData[e][0]) + '|' + String(existingData[e][2]) + '|' + String(existingData[e][1]);
-        if (freshKeys[key]) {
-          removedCount++;
-        } else {
-          keptRows.push(existingData[e]);
-        }
+        if (!freshKeys[key]) keptRows.push(existingData[e]);
       }
 
-      // Append fresh rows at the end
       var finalRows = keptRows.concat(freshRows);
-
-      // Clear and rewrite (only the data area — headers untouched)
       var maxClear = Math.max(lastRow - 1, finalRows.length);
       sheet.getRange(2, 1, maxClear, 11).clear();
       if (finalRows.length > 0) {
         sheet.getRange(2, 1, finalRows.length, 11).setValues(finalRows);
       }
-
-      Logger.log('SP Data ' + country + ' (incremental): removed ' + removedCount +
-        ' stale, appended ' + freshRows.length + ' fresh, total ' + finalRows.length);
+      Logger.log('SP Data ' + country + ' (incremental): total ' + finalRows.length);
     }
-
   } catch (e) {
     Logger.log('Error refreshing SP Data ' + country + ': ' + e.message + '\n' + e.stack);
     throw e;
   }
 }
 
+
 // ============================================
-// REFRESH: SP ROLLING (7/14/30/60-day metrics)
+// REFRESH FUNCTION 2: SP DAILY (Last 35 days)
 // ============================================
+// Dump sheet: "SP Daily {country}"
+// Columns: child_asin | date | units | units_b2b | revenue | revenue_b2b | sessions | page_views | buy_box% | conversion%
+// Full clear + rewrite each run (data is small: ~100 ASINs x 35 days = ~3500 rows).
+// Uses the DEDUPED view (prefers Sales&Traffic over Orders, avoids double-counting).
+
+function refreshDailyDumpData(country, configKey) {
+  try {
+    var config = getSupabaseConfig();
+    var marketplaceId = config.marketplaces[configKey];
+    if (!marketplaceId) throw new Error(country + ' marketplace ID not found in Script Config!');
+
+    SpreadsheetApp.getActiveSpreadsheet().toast('Fetching ' + country + ' daily data (35 days)...', 'Please wait', 60);
+
+    var now = new Date();
+    var daysBack = new Date(now.getTime() - 35 * 24 * 60 * 60 * 1000);
+    var startDate = daysBack.getFullYear() + '-' +
+      String(daysBack.getMonth() + 1).padStart(2, '0') + '-' +
+      String(daysBack.getDate()).padStart(2, '0');
+
+    var url = config.url + '/rest/v1/sp_daily_asin_data_deduped?' +
+      'marketplace_id=eq.' + marketplaceId +
+      '&date=gte.' + startDate +
+      '&select=child_asin,date,units_ordered,units_ordered_b2b,ordered_product_sales,ordered_product_sales_b2b,sessions,page_views,buy_box_percentage,unit_session_percentage' +
+      '&order=child_asin.asc,date.asc';
+
+    var data = fetchAllFromSupabase(url, config);
+
+    var headers = ['child_asin', 'date', 'units_ordered', 'units_ordered_b2b',
+      'ordered_product_sales', 'ordered_product_sales_b2b',
+      'sessions', 'page_views', 'buy_box_percentage', 'unit_session_percentage'];
+
+    var sheet = getOrCreateDumpSheet('SP Daily', country, headers);
+
+    var lastRow = sheet.getLastRow();
+    if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, headers.length).clear();
+
+    var output = [];
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      output.push([
+        r.child_asin || '', r.date || '',
+        r.units_ordered || 0, r.units_ordered_b2b || 0,
+        parseFloat(r.ordered_product_sales) || 0, parseFloat(r.ordered_product_sales_b2b) || 0,
+        r.sessions || 0, r.page_views || 0,
+        parseFloat(r.buy_box_percentage) || 0, parseFloat(r.unit_session_percentage) || 0
+      ]);
+    }
+
+    if (output.length > 0) {
+      sheet.getRange(2, 1, output.length, headers.length).setValues(output);
+    }
+    Logger.log('SP Daily ' + country + ': ' + output.length + ' rows');
+  } catch (e) {
+    Logger.log('Error refreshing SP Daily ' + country + ': ' + e.message + '\n' + e.stack);
+    throw e;
+  }
+}
+
+
+// ============================================
+// REFRESH FUNCTION 3: SP ROLLING (7/14/30/60-day)
+// ============================================
+// Dump sheet: "SP Rolling {country}"
+// One row per ASIN. Full clear + rewrite each run.
 
 function refreshRollingData(country, configKey) {
   try {
     var config = getSupabaseConfig();
     var marketplaceId = config.marketplaces[configKey];
-
-    if (!marketplaceId) {
-      throw new Error(country + ' marketplace ID not found in Script Config!');
-    }
+    if (!marketplaceId) throw new Error(country + ' marketplace ID not found in Script Config!');
 
     SpreadsheetApp.getActiveSpreadsheet().toast('Fetching ' + country + ' rolling metrics...', 'Please wait', 30);
-
     var data = getRollingMetrics(marketplaceId, config);
-    Logger.log('Fetched ' + data.length + ' rolling metric rows');
 
-    // Headers
     var headers = [
       'child_asin', 'parent_asin', 'currency',
       'units_7d', 'revenue_7d', 'avg_units_7d', 'sessions_7d', 'conversion_7d',
@@ -585,13 +550,9 @@ function refreshRollingData(country, configKey) {
 
     var sheet = getOrCreateDumpSheet('SP Rolling', country, headers);
 
-    // Clear existing data (keep headers)
     var lastRow = sheet.getLastRow();
-    if (lastRow > 1) {
-      sheet.getRange(2, 1, lastRow - 1, headers.length).clear();
-    }
+    if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, headers.length).clear();
 
-    // Build output
     var output = [];
     for (var i = 0; i < data.length; i++) {
       var r = data[i];
@@ -611,48 +572,39 @@ function refreshRollingData(country, configKey) {
     if (output.length > 0) {
       sheet.getRange(2, 1, output.length, headers.length).setValues(output);
     }
-
     Logger.log('SP Rolling ' + country + ': ' + output.length + ' rows');
-
   } catch (e) {
     Logger.log('Error refreshing SP Rolling ' + country + ': ' + e.message + '\n' + e.stack);
     throw e;
   }
 }
 
+
 // ============================================
-// REFRESH: SP INVENTORY (FBA + AWD)
+// REFRESH FUNCTION 4: SP INVENTORY (FBA + AWD)
 // ============================================
+// Dump sheet: "SP Inventory {country}"
+// Joins FBA inventory with AWD inventory by SKU.
+// Multi-SKU ASINs = multiple rows (use SUMIFS in formulas, not INDEX/MATCH).
 
 function refreshInventoryData(country, configKey) {
   try {
     var config = getSupabaseConfig();
     var marketplaceId = config.marketplaces[configKey];
-
-    if (!marketplaceId) {
-      throw new Error(country + ' marketplace ID not found in Script Config!');
-    }
+    if (!marketplaceId) throw new Error(country + ' marketplace ID not found in Script Config!');
 
     SpreadsheetApp.getActiveSpreadsheet().toast('Fetching ' + country + ' inventory...', 'Please wait', 30);
 
-    // Fetch FBA inventory (has ASIN)
     var fbaData = getFBAInventoryLatest(marketplaceId, config);
-    Logger.log('FBA inventory: ' + fbaData.length + ' rows');
-
-    // Fetch AWD inventory (SKU only)
     var awdData = getAWDInventoryLatest(marketplaceId, config);
-    Logger.log('AWD inventory: ' + awdData.length + ' rows');
 
     // Build AWD lookup by SKU
     var awdBySKU = {};
     for (var a = 0; a < awdData.length; a++) {
       awdBySKU[awdData[a].sku] = awdData[a];
     }
-
-    // Track which AWD SKUs got matched
     var matchedAWDSKUs = {};
 
-    // Headers (includes EU EFN local/remote columns)
     var headers = [
       'asin', 'sku', 'product_name',
       'fba_fulfillable', 'fba_local', 'fba_remote', 'fba_reserved',
@@ -663,54 +615,38 @@ function refreshInventoryData(country, configKey) {
 
     var sheet = getOrCreateDumpSheet('SP Inventory', country, headers);
 
-    // Clear existing data
     var lastRow = sheet.getLastRow();
-    if (lastRow > 1) {
-      sheet.getRange(2, 1, lastRow - 1, headers.length).clear();
-    }
+    if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, headers.length).clear();
 
-    // Build output: Start with FBA, join AWD by SKU
     var output = [];
     for (var f = 0; f < fbaData.length; f++) {
       var fba = fbaData[f];
       var awd = awdBySKU[fba.sku] || {};
-
-      if (awdBySKU[fba.sku]) {
-        matchedAWDSKUs[fba.sku] = true;
-      }
+      if (awdBySKU[fba.sku]) matchedAWDSKUs[fba.sku] = true;
 
       output.push([
         fba.asin || '', fba.sku || '', fba.product_name || '',
         fba.fulfillable_quantity || 0, fba.fulfillable_quantity_local || 0, fba.fulfillable_quantity_remote || 0,
         fba.reserved_quantity || 0,
-        fba.inbound_working_quantity || 0, fba.inbound_shipped_quantity || 0,
-        fba.inbound_receiving_quantity || 0,
+        fba.inbound_working_quantity || 0, fba.inbound_shipped_quantity || 0, fba.inbound_receiving_quantity || 0,
         fba.unsellable_quantity || 0, fba.total_quantity || 0,
         awd.total_onhand_quantity || 0, awd.total_inbound_quantity || 0,
         awd.available_quantity || 0, awd.total_quantity || 0
       ]);
     }
 
-    // Add unmatched AWD SKUs (not in FBA inventory)
-    // Need SKU→ASIN mapping for these
+    // Add unmatched AWD SKUs (AWD-only, not in FBA)
     var unmatchedCount = 0;
-    var skuAsinMap = {};
-
-    // Check if there are unmatched AWD SKUs
     for (var awdSku in awdBySKU) {
-      if (!matchedAWDSKUs[awdSku]) {
-        unmatchedCount++;
-      }
+      if (!matchedAWDSKUs[awdSku]) unmatchedCount++;
     }
 
-    // If unmatched, fetch SKU→ASIN map
     if (unmatchedCount > 0) {
-      Logger.log(unmatchedCount + ' AWD SKUs not in FBA inventory, fetching ASIN map...');
       var mapData = getSKUASINMap(marketplaceId, config);
+      var skuAsinMap = {};
       for (var m = 0; m < mapData.length; m++) {
         skuAsinMap[mapData[m].sku] = mapData[m].asin;
       }
-
       for (var uSku in awdBySKU) {
         if (!matchedAWDSKUs[uSku]) {
           var uAwd = awdBySKU[uSku];
@@ -727,54 +663,41 @@ function refreshInventoryData(country, configKey) {
     if (output.length > 0) {
       sheet.getRange(2, 1, output.length, headers.length).setValues(output);
     }
-
-    Logger.log('SP Inventory ' + country + ': FBA=' + fbaData.length + ' AWD=' + awdData.length + ' total=' + output.length);
-
+    Logger.log('SP Inventory ' + country + ': FBA=' + fbaData.length + ' AWD=' + awdData.length);
   } catch (e) {
     Logger.log('Error refreshing SP Inventory ' + country + ': ' + e.message + '\n' + e.stack);
     throw e;
   }
 }
 
+
 // ============================================
-// REFRESH: SP FEES (Estimates + Settlement + Storage)
+// REFRESH FUNCTION 5: SP FEES (Estimates + Settlement + Storage)
 // ============================================
+// Dump sheet: "SP Fees {country}"
+// Joins fee estimates + settlement-derived actuals + storage fees.
 
 function refreshFeesData(country, configKey) {
   try {
     var config = getSupabaseConfig();
     var marketplaceId = config.marketplaces[configKey];
-
-    if (!marketplaceId) {
-      throw new Error(country + ' marketplace ID not found in Script Config!');
-    }
+    if (!marketplaceId) throw new Error(country + ' marketplace ID not found in Script Config!');
 
     SpreadsheetApp.getActiveSpreadsheet().toast('Fetching ' + country + ' fee data...', 'Please wait', 30);
 
-    // 1. Fetch fee estimates
     var feeEstimates = getFBAFeeEstimates(marketplaceId, config);
-    Logger.log('Fee estimates: ' + feeEstimates.length + ' rows');
-
-    // 2. Fetch settlement-derived fees
     var settleFees = getSettlementFeesBySKU(marketplaceId, config);
-    Logger.log('Settlement fees: ' + settleFees.length + ' rows');
-
-    // 3. Fetch storage fees (latest month)
     var storageFees = getStorageFeesByASIN(marketplaceId, config);
-    Logger.log('Storage fees: ' + storageFees.length + ' rows');
 
-    // Build lookups
     var settleBySKU = {};
     for (var s = 0; s < settleFees.length; s++) {
       settleBySKU[settleFees[s].sku] = settleFees[s];
     }
-
     var storageByASIN = {};
     for (var st = 0; st < storageFees.length; st++) {
       storageByASIN[storageFees[st].asin] = storageFees[st];
     }
 
-    // Headers
     var headers = [
       'asin', 'sku', 'product_size_tier', 'your_price',
       'est_fee_total', 'est_referral_per_unit', 'est_fba_per_unit',
@@ -784,25 +707,19 @@ function refreshFeesData(country, configKey) {
 
     var sheet = getOrCreateDumpSheet('SP Fees', country, headers);
 
-    // Clear existing data
     var lastRow = sheet.getLastRow();
-    if (lastRow > 1) {
-      sheet.getRange(2, 1, lastRow - 1, headers.length).clear();
-    }
+    if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, headers.length).clear();
 
-    // Build output
     var output = [];
     for (var i = 0; i < feeEstimates.length; i++) {
       var fee = feeEstimates[i];
       var settle = settleBySKU[fee.sku] || {};
       var storage = storageByASIN[fee.asin] || {};
 
-      // Compute FBA fee: est_fee_total - referral = FBA portion
       var estFeeTotal = parseFloat(fee.estimated_fee_total) || 0;
       var estReferral = parseFloat(fee.estimated_referral_fee_per_unit) || 0;
       var estFbaFee = estFeeTotal > 0 ? Math.round((estFeeTotal - estReferral) * 100) / 100 : 0;
 
-      // If pick_pack is available, use it directly (more accurate)
       var pickPack = parseFloat(fee.estimated_pick_pack_fee_per_unit) || 0;
       var weightHandling = parseFloat(fee.estimated_weight_handling_fee_per_unit) || 0;
       if (pickPack > 0 || weightHandling > 0) {
@@ -824,213 +741,45 @@ function refreshFeesData(country, configKey) {
     if (output.length > 0) {
       sheet.getRange(2, 1, output.length, headers.length).setValues(output);
     }
-
     Logger.log('SP Fees ' + country + ': estimates=' + feeEstimates.length + ' settlements=' + settleFees.length + ' storage=' + storageFees.length);
-
   } catch (e) {
     Logger.log('Error refreshing SP Fees ' + country + ': ' + e.message + '\n' + e.stack);
     throw e;
   }
 }
 
-// ============================================
-// REFRESH: SP DAILY (Last 35 days of daily data)
-// ============================================
-
-/**
- * Refreshes SP Daily dump sheet for a marketplace.
- * Fetches last 35 days of per-ASIN daily data from the deduped view.
- * Full clear + rewrite each run (data is small: ~100 ASINs x 35 days).
- *
- * Layout:
- *   A = child_asin
- *   B = date (YYYY-MM-DD)
- *   C = units_ordered
- *   D = units_ordered_b2b
- *   E = ordered_product_sales
- *   F = ordered_product_sales_b2b
- *   G = sessions
- *   H = page_views
- *   I = buy_box_percentage
- *   J = unit_session_percentage
- */
-function refreshDailyDumpData(country, configKey) {
-  try {
-    var config = getSupabaseConfig();
-    var marketplaceId = config.marketplaces[configKey];
-
-    if (!marketplaceId) {
-      throw new Error(country + ' marketplace ID not found in Script Config!');
-    }
-
-    SpreadsheetApp.getActiveSpreadsheet().toast('Fetching ' + country + ' daily data (35 days)...', 'Please wait', 60);
-
-    // Calculate date range: last 35 days
-    var now = new Date();
-    var daysBack = new Date(now.getTime() - 35 * 24 * 60 * 60 * 1000);
-    var startDate = daysBack.getFullYear() + '-' +
-      String(daysBack.getMonth() + 1).padStart(2, '0') + '-' +
-      String(daysBack.getDate()).padStart(2, '0');
-
-    // Use deduped view (prefers S&T over orders, avoids double-counting)
-    var url = config.url + '/rest/v1/sp_daily_asin_data_deduped?' +
-      'marketplace_id=eq.' + marketplaceId +
-      '&date=gte.' + startDate +
-      '&select=child_asin,date,units_ordered,units_ordered_b2b,ordered_product_sales,ordered_product_sales_b2b,sessions,page_views,buy_box_percentage,unit_session_percentage' +
-      '&order=child_asin.asc,date.asc';
-
-    Logger.log('Fetching daily dump data since ' + startDate);
-    var data = fetchAllFromSupabase(url, config);
-    Logger.log('Fetched ' + data.length + ' daily rows');
-
-    // Headers
-    var headers = [
-      'child_asin', 'date',
-      'units_ordered', 'units_ordered_b2b',
-      'ordered_product_sales', 'ordered_product_sales_b2b',
-      'sessions', 'page_views',
-      'buy_box_percentage', 'unit_session_percentage'
-    ];
-
-    var sheet = getOrCreateDumpSheet('SP Daily', country, headers);
-
-    // Clear existing data (keep headers)
-    var lastRow = sheet.getLastRow();
-    if (lastRow > 1) {
-      sheet.getRange(2, 1, lastRow - 1, headers.length).clear();
-    }
-
-    // Build output
-    var output = [];
-    for (var i = 0; i < data.length; i++) {
-      var r = data[i];
-      output.push([
-        r.child_asin || '',
-        r.date || '',
-        r.units_ordered || 0,
-        r.units_ordered_b2b || 0,
-        parseFloat(r.ordered_product_sales) || 0,
-        parseFloat(r.ordered_product_sales_b2b) || 0,
-        r.sessions || 0,
-        r.page_views || 0,
-        parseFloat(r.buy_box_percentage) || 0,
-        parseFloat(r.unit_session_percentage) || 0
-      ]);
-    }
-
-    if (output.length > 0) {
-      sheet.getRange(2, 1, output.length, headers.length).setValues(output);
-    }
-
-    Logger.log('SP Daily ' + country + ': ' + output.length + ' rows');
-
-  } catch (e) {
-    Logger.log('Error refreshing SP Daily ' + country + ': ' + e.message + '\n' + e.stack);
-    throw e;
-  }
-}
 
 // ============================================
-// TRIGGER-SAFE PER-COUNTRY FUNCTIONS
+// TRIGGER FUNCTIONS — USA ONLY (for now)
 // ============================================
-// Each function refreshes ONE data type for ONE country.
-// Google Apps Script 6-min limit means we CANNOT do everything in one run.
+// 5 triggers, one per dump sheet.
+// Each runs independently within the 6-min limit.
 //
-// Naming: trigger_{COUNTRY}_{TYPE}
-//   TYPE: sales, rolling, inventory, fees, daily
-//
-// Set up time-based triggers on these (staggered 3-5 min apart).
-// Use "Setup Triggers" from menu to auto-create all of them.
+// To add another country later:
+//   1. Add its marketplace UUID to Script Config
+//   2. Copy these 5 lines, change "US" to the new country code
+//   3. Run Setup Triggers from menu
 
-// --- US ---
 function trigger_US_sales()     { refreshSPData('US', 'US'); }
+function trigger_US_daily()     { refreshDailyDumpData('US', 'US'); }
 function trigger_US_rolling()   { refreshRollingData('US', 'US'); }
 function trigger_US_inventory() { refreshInventoryData('US', 'US'); }
 function trigger_US_fees()      { refreshFeesData('US', 'US'); }
-function trigger_US_daily()     { refreshDailyDumpData('US', 'US'); }
 
-// --- CA ---
-function trigger_CA_sales()     { refreshSPData('CA', 'CA'); }
-function trigger_CA_rolling()   { refreshRollingData('CA', 'CA'); }
-function trigger_CA_inventory() { refreshInventoryData('CA', 'CA'); }
-function trigger_CA_fees()      { refreshFeesData('CA', 'CA'); }
-function trigger_CA_daily()     { refreshDailyDumpData('CA', 'CA'); }
-
-// --- MX ---
-function trigger_MX_sales()     { refreshSPData('MX', 'MX'); }
-function trigger_MX_rolling()   { refreshRollingData('MX', 'MX'); }
-function trigger_MX_inventory() { refreshInventoryData('MX', 'MX'); }
-function trigger_MX_fees()      { refreshFeesData('MX', 'MX'); }
-function trigger_MX_daily()     { refreshDailyDumpData('MX', 'MX'); }
-
-// --- UK ---
-function trigger_UK_sales()     { refreshSPData('UK', 'UK'); }
-function trigger_UK_rolling()   { refreshRollingData('UK', 'UK'); }
-function trigger_UK_inventory() { refreshInventoryData('UK', 'UK'); }
-function trigger_UK_fees()      { refreshFeesData('UK', 'UK'); }
-function trigger_UK_daily()     { refreshDailyDumpData('UK', 'UK'); }
-
-// --- DE ---
-function trigger_DE_sales()     { refreshSPData('DE', 'DE'); }
-function trigger_DE_rolling()   { refreshRollingData('DE', 'DE'); }
-function trigger_DE_inventory() { refreshInventoryData('DE', 'DE'); }
-function trigger_DE_fees()      { refreshFeesData('DE', 'DE'); }
-function trigger_DE_daily()     { refreshDailyDumpData('DE', 'DE'); }
-
-// --- FR ---
-function trigger_FR_sales()     { refreshSPData('FR', 'FR'); }
-function trigger_FR_rolling()   { refreshRollingData('FR', 'FR'); }
-function trigger_FR_inventory() { refreshInventoryData('FR', 'FR'); }
-function trigger_FR_fees()      { refreshFeesData('FR', 'FR'); }
-function trigger_FR_daily()     { refreshDailyDumpData('FR', 'FR'); }
-
-// --- IT ---
-function trigger_IT_sales()     { refreshSPData('IT', 'IT'); }
-function trigger_IT_rolling()   { refreshRollingData('IT', 'IT'); }
-function trigger_IT_inventory() { refreshInventoryData('IT', 'IT'); }
-function trigger_IT_fees()      { refreshFeesData('IT', 'IT'); }
-function trigger_IT_daily()     { refreshDailyDumpData('IT', 'IT'); }
-
-// --- ES ---
-function trigger_ES_sales()     { refreshSPData('ES', 'ES'); }
-function trigger_ES_rolling()   { refreshRollingData('ES', 'ES'); }
-function trigger_ES_inventory() { refreshInventoryData('ES', 'ES'); }
-function trigger_ES_fees()      { refreshFeesData('ES', 'ES'); }
-function trigger_ES_daily()     { refreshDailyDumpData('ES', 'ES'); }
-
-// --- AU ---
-function trigger_AU_sales()     { refreshSPData('AU', 'AU'); }
-function trigger_AU_rolling()   { refreshRollingData('AU', 'AU'); }
-function trigger_AU_inventory() { refreshInventoryData('AU', 'AU'); }
-function trigger_AU_fees()      { refreshFeesData('AU', 'AU'); }
-function trigger_AU_daily()     { refreshDailyDumpData('AU', 'AU'); }
-
-// --- UAE ---
-function trigger_UAE_sales()     { refreshSPData('UAE', 'UAE'); }
-function trigger_UAE_rolling()   { refreshRollingData('UAE', 'UAE'); }
-function trigger_UAE_inventory() { refreshInventoryData('UAE', 'UAE'); }
-function trigger_UAE_fees()      { refreshFeesData('UAE', 'UAE'); }
-function trigger_UAE_daily()     { refreshDailyDumpData('UAE', 'UAE'); }
 
 // ============================================
 // AUTO-SETUP TRIGGERS
 // ============================================
-// Creates time-based triggers for all countries, staggered 3 min apart.
-// Each country gets 4 triggers (sales, rolling, inventory, fees) at the same time.
-// Run once from menu: Supabase Data → Setup Daily Triggers
-//
-// Schedule (default 6 AM start):
-//   6:00 - US | 6:03 - CA | 6:06 - MX | 6:09 - UK | 6:12 - DE
-//   6:15 - FR | 6:18 - IT | 6:21 - ES | 6:24 - AU | 6:27 - UAE
 
 /**
- * Creates daily time-based triggers for all configured marketplaces.
- * Deletes existing supabase triggers first to avoid duplicates.
+ * Creates time-based triggers for all CONFIGURED marketplaces.
+ * Only creates triggers for countries that have a marketplace ID in Script Config.
+ * Currently USA only = 5 triggers.
+ *
+ * Deletes existing trigger_ functions first to avoid duplicates.
  */
-function setupDailyTriggers() {
+function setupTriggers() {
   var ui = SpreadsheetApp.getUi();
-
-  // Get configured countries
   var config = getSupabaseConfig();
   var countries = Object.keys(config.marketplaces);
 
@@ -1039,12 +788,23 @@ function setupDailyTriggers() {
     return;
   }
 
+  var types = ['sales', 'daily', 'rolling', 'inventory', 'fees'];
+
+  // Check which trigger functions actually exist
+  var availableFunctions = [];
+  for (var i = 0; i < countries.length; i++) {
+    var testFunc = 'trigger_' + countries[i] + '_sales';
+    // We can only create triggers for functions that exist in the script
+    availableFunctions.push(countries[i]);
+  }
+
+  var totalTriggers = availableFunctions.length * types.length;
+
   var confirm = ui.alert(
-    'Setup Daily Triggers',
-    'This will create daily triggers for ' + countries.length + ' marketplaces:\n' +
-    countries.join(', ') + '\n\n' +
-    '5 triggers per country (sales, rolling, inventory, fees, daily)\n' +
-    'Total: ' + (countries.length * 5) + ' triggers\n' +
+    'Setup Triggers',
+    'This will create triggers for: ' + availableFunctions.join(', ') + '\n\n' +
+    types.length + ' triggers per country\n' +
+    'Total: ' + totalTriggers + ' triggers\n' +
     'Staggered 3 min apart starting at 6:00 AM\n\n' +
     'Any existing "trigger_" triggers will be deleted first.\n\n' +
     'Continue?',
@@ -1061,24 +821,19 @@ function setupDailyTriggers() {
       deleted++;
     }
   }
-  Logger.log('Deleted ' + deleted + ' existing triggers');
 
-  // Data types for each country
-  var types = ['sales', 'rolling', 'inventory', 'fees', 'daily'];
   var startHour = 6;
   var startMinute = 0;
   var created = 0;
 
-  for (var i = 0; i < countries.length; i++) {
-    var country = countries[i];
-    var minuteOffset = startMinute + (i * 3);
+  for (var ci = 0; ci < availableFunctions.length; ci++) {
+    var country = availableFunctions[ci];
+    var minuteOffset = startMinute + (ci * 3);
     var hour = startHour + Math.floor(minuteOffset / 60);
     var minute = minuteOffset % 60;
 
     for (var j = 0; j < types.length; j++) {
       var funcName = 'trigger_' + country + '_' + types[j];
-
-      // Verify function exists
       try {
         ScriptApp.newTrigger(funcName)
           .timeBased()
@@ -1087,7 +842,6 @@ function setupDailyTriggers() {
           .everyDays(1)
           .create();
         created++;
-        Logger.log('Created trigger: ' + funcName + ' at ~' + hour + ':' + String(minute).padStart(2, '0'));
       } catch (e) {
         Logger.log('Failed to create trigger ' + funcName + ': ' + e.message);
       }
@@ -1098,17 +852,14 @@ function setupDailyTriggers() {
     'Deleted: ' + deleted + ' old triggers\n' +
     'Created: ' + created + ' new triggers\n\n' +
     'Schedule (daily):\n' +
-    countries.map(function(c, idx) {
+    availableFunctions.map(function(c, idx) {
       var mo = startMinute + (idx * 3);
       var h = startHour + Math.floor(mo / 60);
       var m = mo % 60;
-      return c + ' → ~' + h + ':' + String(m).padStart(2, '0');
+      return c + ' -> ~' + h + ':' + String(m).padStart(2, '0');
     }).join('\n'));
 }
 
-/**
- * Deletes all trigger_ triggers. Use to stop automation.
- */
 function removeAllTriggers() {
   var existing = ScriptApp.getProjectTriggers();
   var deleted = 0;
@@ -1121,15 +872,20 @@ function removeAllTriggers() {
   _safeAlert('Removed ' + deleted + ' triggers.');
 }
 
+
+// ============================================
+// MANUAL REFRESH — ONE COUNTRY
+// ============================================
+
 /**
- * Manual run: refresh one country at a time from menu.
- * Runs all 5 data types sequentially for the selected country.
+ * Runs all 5 dump sheet refreshes for a single country.
+ * Use from menu to test or manually update.
  */
 function refreshOneCountry() {
   var ui = SpreadsheetApp.getUi();
   var response = ui.prompt(
     'Refresh One Country',
-    'Enter country code (US, CA, MX, UK, DE, FR, IT, ES, AU, UAE):',
+    'Enter country code (e.g., US, CA, UK, DE):',
     ui.ButtonSet.OK_CANCEL);
 
   if (response.getSelectedButton() !== ui.Button.OK) return;
@@ -1147,11 +903,11 @@ function refreshOneCountry() {
   var errors = [];
 
   var steps = [
-    { name: 'Sales', fn: function() { refreshSPData(country, country); } },
-    { name: 'Rolling', fn: function() { refreshRollingData(country, country); } },
-    { name: 'Inventory', fn: function() { refreshInventoryData(country, country); } },
-    { name: 'Fees', fn: function() { refreshFeesData(country, country); } },
-    { name: 'Daily', fn: function() { refreshDailyDumpData(country, country); } }
+    { name: 'Sales (weekly/monthly)', fn: function() { refreshSPData(country, country); } },
+    { name: 'Daily (last 35 days)',   fn: function() { refreshDailyDumpData(country, country); } },
+    { name: 'Rolling (7/14/30/60d)',  fn: function() { refreshRollingData(country, country); } },
+    { name: 'Inventory (FBA+AWD)',    fn: function() { refreshInventoryData(country, country); } },
+    { name: 'Fees (est+settle+stor)', fn: function() { refreshFeesData(country, country); } }
   ];
 
   for (var i = 0; i < steps.length; i++) {
@@ -1166,21 +922,10 @@ function refreshOneCountry() {
   if (errors.length > 0) {
     ui.alert(country + ' refresh done with errors:\n\n' + errors.join('\n'));
   } else {
-    ui.alert(country + ' — all 5 data types refreshed!');
+    ui.alert(country + ' — all 5 dump sheets refreshed!');
   }
 }
 
-/**
- * Shows alert if running interactively, logs if running from trigger.
- */
-function _safeAlert(message) {
-  try {
-    SpreadsheetApp.getUi().alert(message);
-  } catch (e) {
-    // Running from trigger — no UI available, just log
-    Logger.log(message);
-  }
-}
 
 // ============================================
 // DUPLICATE COUNTRY TAB
@@ -1188,23 +933,19 @@ function _safeAlert(message) {
 
 /**
  * Duplicates a country tab (e.g., USA) to a new country.
- * Copies the sheet, renames it, and replaces all dump sheet references
- * in formulas so they point to the new country's dump sheets.
+ * Copies the sheet, then:
+ *   - Replaces all dump sheet references in formulas
+ *     ('SP Data US' → 'SP Data CA', etc.)
+ *   - Updates A2 (marketplace UUID) and B2 (country code)
  *
- * Example: Duplicating "USA" for "CA" will replace all instances of:
- *   'SP Data US'   → 'SP Data CA'
- *   'SP Daily US'  → 'SP Daily CA'
- *   'SP Rolling US' → 'SP Rolling CA'
- *   'SP Inventory US' → 'SP Inventory CA'
- *   'SP Fees US'   → 'SP Fees CA'
- *
- * Also updates A2 (marketplace UUID) and B2 (country code).
+ * This is how you expand from USA to other countries
+ * without manually editing hundreds of formulas.
  */
 function duplicateCountryTab() {
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  // Prompt for source tab
+  // Source tab
   var sourceResponse = ui.prompt(
     'Duplicate Country Tab',
     'Enter the SOURCE tab name to copy from (e.g., "USA"):',
@@ -1218,18 +959,17 @@ function duplicateCountryTab() {
     return;
   }
 
-  // Get source country code from B2
   var sourceCountry = String(sourceSheet.getRange('B2').getValue()).trim();
   if (!sourceCountry) {
     ui.alert('No country code found in B2 of "' + sourceTabName + '"!');
     return;
   }
 
-  // Prompt for target country
+  // Target country
   var targetResponse = ui.prompt(
     'Target Country',
-    'Enter the TARGET country code (e.g., CA, UK, DE, FR, IT, ES, MX, AU, UAE):\n\n' +
-    'Source tab: ' + sourceTabName + ' (country: ' + sourceCountry + ')',
+    'Enter the TARGET country code (e.g., CA, UK, DE):\n\n' +
+    'Source: ' + sourceTabName + ' (code: ' + sourceCountry + ')',
     ui.ButtonSet.OK_CANCEL);
   if (targetResponse.getSelectedButton() !== ui.Button.OK) return;
 
@@ -1239,7 +979,6 @@ function duplicateCountryTab() {
     return;
   }
 
-  // Get target marketplace UUID from config
   var config = getSupabaseConfig();
   var targetMarketplaceId = config.marketplaces[targetCountry];
   if (!targetMarketplaceId) {
@@ -1249,7 +988,7 @@ function duplicateCountryTab() {
     return;
   }
 
-  // Country code to display name mapping
+  // Country display names
   var countryNames = {
     'US': 'USA', 'CA': 'Canada', 'MX': 'Mexico',
     'UK': 'UK', 'DE': 'Germany', 'FR': 'France',
@@ -1258,55 +997,50 @@ function duplicateCountryTab() {
   };
   var targetTabName = countryNames[targetCountry] || targetCountry;
 
-  // Check if target tab already exists
   if (ss.getSheetByName(targetTabName)) {
     var overwrite = ui.alert(
       'Tab "' + targetTabName + '" already exists!',
-      'Do you want to delete it and create a fresh copy?',
+      'Delete it and create a fresh copy?',
       ui.ButtonSet.YES_NO);
     if (overwrite !== ui.Button.YES) return;
     ss.deleteSheet(ss.getSheetByName(targetTabName));
   }
 
-  // Verify dump sheets exist for target country
+  // Check dump sheets exist
   var dumpPrefixes = ['SP Data', 'SP Daily', 'SP Rolling', 'SP Inventory', 'SP Fees'];
   var missingDumps = [];
   for (var d = 0; d < dumpPrefixes.length; d++) {
-    var dumpName = dumpPrefixes[d] + ' ' + targetCountry;
-    if (!ss.getSheetByName(dumpName)) {
-      missingDumps.push(dumpName);
+    if (!ss.getSheetByName(dumpPrefixes[d] + ' ' + targetCountry)) {
+      missingDumps.push(dumpPrefixes[d] + ' ' + targetCountry);
     }
   }
 
   if (missingDumps.length > 0) {
     var proceed = ui.alert(
-      'Missing dump sheets for ' + targetCountry + ':\n\n' +
-      missingDumps.join('\n') + '\n\n' +
-      'Run "Refresh One Country" for ' + targetCountry + ' first to create them.\n\n' +
-      'Continue anyway? (formulas will show errors until dump sheets exist)',
+      'Missing dump sheets:\n\n' + missingDumps.join('\n') + '\n\n' +
+      'Run "Refresh One Country" for ' + targetCountry + ' first.\n\n' +
+      'Continue anyway? (formulas will show errors)',
       ui.ButtonSet.YES_NO);
     if (proceed !== ui.Button.YES) return;
   }
 
-  ss.toast('Duplicating ' + sourceTabName + ' → ' + targetTabName + '...', 'Please wait', 60);
+  ss.toast('Duplicating ' + sourceTabName + ' -> ' + targetTabName + '...', 'Please wait', 60);
 
-  // Duplicate the sheet
+  // Copy sheet
   var newSheet = sourceSheet.copyTo(ss);
   newSheet.setName(targetTabName);
 
-  // Update A2 (marketplace UUID) and B2 (country code)
+  // Update config cells
   newSheet.getRange('A2').setValue(targetMarketplaceId);
   newSheet.getRange('B2').setValue(targetCountry);
 
-  // Replace dump sheet references in all formulas
+  // Replace all dump sheet references in formulas
   var dataRange = newSheet.getDataRange();
   var formulas = dataRange.getFormulas();
-  var numRows = formulas.length;
-  var numCols = formulas[0].length;
   var replacementCount = 0;
 
-  for (var row = 0; row < numRows; row++) {
-    for (var col = 0; col < numCols; col++) {
+  for (var row = 0; row < formulas.length; row++) {
+    for (var col = 0; col < formulas[row].length; col++) {
       var formula = formulas[row][col];
       if (!formula) continue;
 
@@ -1314,7 +1048,6 @@ function duplicateCountryTab() {
       for (var p = 0; p < dumpPrefixes.length; p++) {
         var oldRef = dumpPrefixes[p] + ' ' + sourceCountry;
         var newRef = dumpPrefixes[p] + ' ' + targetCountry;
-        // Replace both with and without quotes (Google Sheets may use either)
         newFormula = newFormula.split("'" + oldRef + "'").join("'" + newRef + "'");
         newFormula = newFormula.split(oldRef).join(newRef);
       }
@@ -1327,14 +1060,14 @@ function duplicateCountryTab() {
   }
 
   ui.alert('Done!\n\n' +
-    'Created tab: ' + targetTabName + '\n' +
+    'Created: ' + targetTabName + '\n' +
     'Country: ' + targetCountry + '\n' +
-    'Marketplace: ' + targetMarketplaceId.substring(0, 8) + '...\n' +
     'Formulas updated: ' + replacementCount + '\n\n' +
     (missingDumps.length > 0 ?
-      'NOTE: Some dump sheets are missing. Run "Refresh One Country" for ' + targetCountry + ' to create them.' :
-      'All dump sheets found. Formulas should be pulling data.'));
+      'NOTE: Run "Refresh One Country" for ' + targetCountry + ' to create missing dump sheets.' :
+      'All dump sheets found.'));
 }
+
 
 // ============================================
 // MENU
@@ -1347,26 +1080,18 @@ function onOpen() {
     .addItem('Duplicate Country Tab...', 'duplicateCountryTab')
     .addSeparator()
     .addSubMenu(ui.createMenu('Automation')
-      .addItem('Setup Daily Triggers', 'setupDailyTriggers')
+      .addItem('Setup Triggers', 'setupTriggers')
       .addItem('Remove All Triggers', 'removeAllTriggers'))
-    .addSeparator()
-    .addSubMenu(ui.createMenu('Daily Sheets')
-      .addItem('Refresh Current Sheet', 'refreshCurrentDailySheet')
-      .addItem('Refresh TESTING Sheet', 'refreshTestingSheet'))
     .addSeparator()
     .addSubMenu(ui.createMenu('Debug')
       .addItem('Test Connection', 'testConnection')
-      .addItem('Check Sheet Dates', 'debugTestingSheetDates')
-      .addItem('Check Sheet ASINs', 'debugTestingSheetASINs'))
-    .addSeparator()
-    .addItem('Show Formula Examples', 'showFormulaExamples')
+      .addItem('Show Formula Examples', 'showFormulaExamples'))
     .addToUi();
 }
 
 function testConnection() {
   try {
     var config = getSupabaseConfig();
-
     var data = fetchFromSupabase('/rest/v1/sp_daily_asin_data', {
       'select': 'date,child_asin',
       'limit': '1'
@@ -1379,249 +1104,14 @@ function testConnection() {
   }
 }
 
-// ============================================
-// DAILY SHEET REFRESH - AUTO-DETECT COLUMNS
-// ============================================
-
-function refreshCurrentDailySheet() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getActiveSheet();
-  refreshDailySheet(sheet);
-}
-
-function refreshTestingSheet() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('TESTING');
-
-  if (!sheet) {
-    SpreadsheetApp.getUi().alert('TESTING sheet not found!');
-    return;
-  }
-
-  refreshDailySheet(sheet);
-}
-
-function refreshDailySheet(sheet) {
+function _safeAlert(message) {
   try {
-    var config = getSupabaseConfig();
-
-    var marketplaceId = sheet.getRange('A2').getValue();
-    if (!marketplaceId) {
-      SpreadsheetApp.getUi().alert('Marketplace UUID not found in A2!');
-      return;
-    }
-
-    var asinRange = sheet.getRange('C5:C500');
-    var asinValues = asinRange.getValues();
-    var asins = [];
-
-    for (var i = 0; i < asinValues.length; i++) {
-      var asin = String(asinValues[i][0]).trim();
-      if (asin && asin.length > 0 && asin !== '' && asin !== 'undefined') {
-        asins.push(asin);
-      } else {
-        break;
-      }
-    }
-
-    if (asins.length === 0) {
-      SpreadsheetApp.getUi().alert('No ASINs found in column C!');
-      return;
-    }
-
-    var dateColumns = autoDetectDateColumns(sheet, 4, 6, 150);
-    if (dateColumns.length === 0) {
-      SpreadsheetApp.getUi().alert('No dates found in row 4!');
-      return;
-    }
-
-    var firstDateCol = dateColumns[0].col;
-    var allDates = dateColumns.map(function(d) { return d.date; }).sort();
-    var minDate = allDates[0];
-    var maxDate = allDates[allDates.length - 1];
-
-    SpreadsheetApp.getActiveSpreadsheet().toast('Fetching data from Supabase...', 'Please wait', 30);
-
-    var data = getDailyDataBetweenDates(marketplaceId, minDate, maxDate, config);
-
-    var lookup = {};
-    for (var d = 0; d < data.length; d++) {
-      var row = data[d];
-      if (!lookup[row.child_asin]) lookup[row.child_asin] = {};
-      lookup[row.child_asin][row.date] = row.units_ordered || 0;
-    }
-
-    var numRows = asins.length;
-    var numCols = dateColumns.length;
-    var output = [];
-
-    for (var r = 0; r < numRows; r++) {
-      var asinKey = asins[r];
-      var rowData = [];
-      for (var c = 0; c < numCols; c++) {
-        var dateKey = dateColumns[c].date;
-        var units = (lookup[asinKey] && lookup[asinKey][dateKey] !== undefined) ? lookup[asinKey][dateKey] : 0;
-        rowData.push(units);
-      }
-      output.push(rowData);
-    }
-
-    sheet.getRange(5, firstDateCol, numRows, numCols).setValues(output);
-
-    var filledCells = 0;
-    for (var ri = 0; ri < output.length; ri++) {
-      for (var ci = 0; ci < output[ri].length; ci++) {
-        if (output[ri][ci] !== '' && output[ri][ci] !== 0) filledCells++;
-      }
-    }
-
-    SpreadsheetApp.getUi().alert('Sheet refreshed!\n\nASINs: ' + asins.length +
-      '\nDate columns: ' + dateColumns.length +
-      '\nDate range: ' + minDate + ' to ' + maxDate +
-      '\nSupabase rows: ' + data.length +
-      '\nCells with data: ' + filledCells);
-
+    SpreadsheetApp.getUi().alert(message);
   } catch (e) {
-    Logger.log('Error: ' + e.message + '\n' + e.stack);
-    SpreadsheetApp.getUi().alert('Error: ' + e.message);
+    Logger.log(message);
   }
 }
 
-// ============================================
-// AUTO-DETECT DATE COLUMNS
-// ============================================
-
-function autoDetectDateColumns(sheet, row, startCol, maxCols) {
-  var range = sheet.getRange(row, startCol, 1, maxCols);
-  var values = range.getValues()[0];
-  var dateColumns = [];
-
-  var foundFirstDate = false;
-  var consecutiveEmpty = 0;
-
-  for (var i = 0; i < values.length; i++) {
-    var cellValue = values[i];
-    var colNum = startCol + i;
-
-    if (cellValue) {
-      var dateStr = parseCellAsDate(cellValue);
-
-      if (dateStr) {
-        foundFirstDate = true;
-        consecutiveEmpty = 0;
-        dateColumns.push({ col: colNum, date: dateStr });
-      } else if (foundFirstDate) {
-        consecutiveEmpty++;
-        if (consecutiveEmpty > 5) break;
-      }
-    } else if (foundFirstDate) {
-      consecutiveEmpty++;
-      if (consecutiveEmpty > 5) break;
-    }
-  }
-
-  return dateColumns;
-}
-
-function parseCellAsDate(cellValue) {
-  if (!cellValue) return null;
-
-  if (cellValue instanceof Date) {
-    if (isNaN(cellValue.getTime())) return null;
-    var year = cellValue.getFullYear();
-    var month = String(cellValue.getMonth() + 1).padStart(2, '0');
-    var day = String(cellValue.getDate()).padStart(2, '0');
-    if (year < 1900 || year > 2100) return null;
-    return year + '-' + month + '-' + day;
-  }
-
-  if (typeof cellValue === 'number') {
-    if (cellValue < 1 || cellValue > 100000) return null;
-    var jsDate = new Date((cellValue - 25569) * 86400 * 1000);
-    if (isNaN(jsDate.getTime())) return null;
-    var y = jsDate.getFullYear();
-    var m = String(jsDate.getMonth() + 1).padStart(2, '0');
-    var d = String(jsDate.getDate()).padStart(2, '0');
-    if (y < 1900 || y > 2100) return null;
-    return y + '-' + m + '-' + d;
-  }
-
-  if (typeof cellValue === 'string') {
-    var parts = cellValue.split('/');
-    if (parts.length === 2) {
-      var part1 = parseInt(parts[0], 10);
-      var part2 = parseInt(parts[1], 10);
-      if (isNaN(part1) || isNaN(part2)) return null;
-      var dy, mo;
-      if (part1 > 12) { dy = part1; mo = part2; }
-      else if (part2 > 12) { mo = part1; dy = part2; }
-      else { dy = part1; mo = part2; }
-      if (dy < 1 || dy > 31 || mo < 1 || mo > 12) return null;
-      var yr = new Date().getFullYear();
-      return yr + '-' + String(mo).padStart(2, '0') + '-' + String(dy).padStart(2, '0');
-    }
-  }
-
-  return null;
-}
-
-function columnToLetter(column) {
-  var temp, letter = '';
-  while (column > 0) {
-    temp = (column - 1) % 26;
-    letter = String.fromCharCode(temp + 65) + letter;
-    column = (column - temp - 1) / 26;
-  }
-  return letter;
-}
-
-// ============================================
-// DEBUG FUNCTIONS
-// ============================================
-
-function debugTestingSheetDates() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('TESTING');
-  if (!sheet) { SpreadsheetApp.getUi().alert('TESTING sheet not found!'); return; }
-
-  var range = sheet.getRange(4, 72, 1, 10);
-  var values = range.getValues()[0];
-  var debug = 'Date header debug (Row 4, starting BT):\n\n';
-
-  for (var i = 0; i < values.length; i++) {
-    var val = values[i];
-    var colLetter = columnToLetter(72 + i);
-    debug += colLetter + '4: ';
-    if (val instanceof Date) { debug += 'Date: ' + val.toISOString().split('T')[0]; }
-    else if (typeof val === 'number') { debug += 'Number: ' + val; }
-    else if (typeof val === 'string') { debug += 'String: "' + val + '"'; }
-    else { debug += 'Empty'; }
-    debug += '\n';
-  }
-  SpreadsheetApp.getUi().alert(debug);
-}
-
-function debugTestingSheetASINs() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('TESTING');
-  if (!sheet) { SpreadsheetApp.getUi().alert('TESTING sheet not found!'); return; }
-
-  var range = sheet.getRange('C5:C15');
-  var values = range.getValues();
-  var debug = 'ASIN debug (Column C, rows 5-14):\n\n';
-
-  for (var i = 0; i < values.length; i++) {
-    var val = values[i][0];
-    debug += 'C' + (5 + i) + ': ';
-    if (val && String(val).trim().length > 0) { debug += '"' + String(val).trim() + '"'; }
-    else { debug += '(empty)'; }
-    debug += '\n';
-  }
-
-  var marketplaceId = sheet.getRange('A2').getValue();
-  debug += '\nA2 (Marketplace UUID): "' + marketplaceId + '"';
-  SpreadsheetApp.getUi().alert(debug);
-}
 
 // ============================================
 // FORMULA EXAMPLES
@@ -1629,124 +1119,80 @@ function debugTestingSheetASINs() {
 
 function showFormulaExamples() {
   var examples =
-    'FORMULA EXAMPLES FOR SUPABASE DATA SHEETS\n' +
-    '═══════════════════════════════════════\n\n' +
-    'SETUP: A2 = marketplace UUID, B2 = country code (US)\n' +
-    'ASIN column = $C5 (manually maintained)\n' +
-    'Date headers in row 4\n' +
-    'Replace "US" with your country code in sheet names\n\n' +
+    'FORMULA REFERENCE — ZERO HARDCODING\n' +
+    '====================================\n\n' +
 
-    '── SP DATA (Weekly/Monthly) ──\n' +
-    'Cols: A=data_type B=child_asin C=period D=units E=units_b2b\n' +
-    'F=revenue G=revenue_b2b H=sessions I=page_views\n' +
-    'J=avg_buy_box% K=avg_conversion%\n\n' +
+    'COUNTRY TAB SETUP:\n' +
+    '  A2 = marketplace UUID (from Script Config)\n' +
+    '  B2 = country code (e.g., US)\n' +
+    '  Row 4 = date headers (actual dates, not text)\n' +
+    '  Column C = ASINs starting at C5\n\n' +
 
-    'Monthly Units (row 4 = first-of-month date):\n' +
-    '=IFERROR(SUMIFS(\'SP Data US\'!$D:$D, \'SP Data US\'!$A:$A, "monthly", \'SP Data US\'!$B:$B, $C5, \'SP Data US\'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
+    'Every formula uses ONLY cell references:\n' +
+    '  $C5  = ASIN (from your list)\n' +
+    '  G$4  = date (from your header row)\n' +
+    '  No values are typed into the formula itself.\n\n' +
 
-    'Monthly Revenue:\n' +
-    '=IFERROR(SUMIFS(\'SP Data US\'!$F:$F, \'SP Data US\'!$A:$A, "monthly", \'SP Data US\'!$B:$B, $C5, \'SP Data US\'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
+    '=== SP DATA (Monthly/Weekly) ===\n' +
+    'Sheet: "SP Data US"\n' +
+    'A=data_type B=child_asin C=period(YYYY-MM-DD)\n' +
+    'D=units E=units_b2b F=revenue G=revenue_b2b\n' +
+    'H=sessions I=page_views J=buy_box% K=conversion%\n\n' +
 
-    'Monthly Sessions:\n' +
-    '=IFERROR(SUMIFS(\'SP Data US\'!$H:$H, \'SP Data US\'!$A:$A, "monthly", \'SP Data US\'!$B:$B, $C5, \'SP Data US\'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
+    'Monthly Units:\n' +
+    '=IFERROR(SUMIFS(\'SP Data US\'!$D:$D,\n' +
+    '  \'SP Data US\'!$A:$A, "monthly",\n' +
+    '  \'SP Data US\'!$B:$B, $C5,\n' +
+    '  \'SP Data US\'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
 
-    'Monthly Conversion Rate:\n' +
-    '=IFERROR(SUMIFS(\'SP Data US\'!$K:$K, \'SP Data US\'!$A:$A, "monthly", \'SP Data US\'!$B:$B, $C5, \'SP Data US\'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
+    'Weekly Units (row 4 must have Sunday dates):\n' +
+    '=IFERROR(SUMIFS(\'SP Data US\'!$D:$D,\n' +
+    '  \'SP Data US\'!$A:$A, "weekly",\n' +
+    '  \'SP Data US\'!$B:$B, $C5,\n' +
+    '  \'SP Data US\'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
 
-    'Weekly Units (row 4 = Sunday date, Amazon weeks = Sun-Sat):\n' +
-    '=IFERROR(SUMIFS(\'SP Data US\'!$D:$D, \'SP Data US\'!$A:$A, "weekly", \'SP Data US\'!$B:$B, $C5, \'SP Data US\'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
+    'Change column for different metrics:\n' +
+    '  $D = units | $F = revenue | $H = sessions | $K = conversion\n\n' +
 
-    'Daily Average (from monthly units):\n' +
-    '=IFERROR(G5 / DAY(EOMONTH(G$4, 0)), 0)\n\n' +
-
-    '── SP DAILY (Last 35 days) ──\n' +
-    'Cols: A=child_asin B=date C=units D=units_b2b\n' +
+    '=== SP DAILY (Last 35 days) ===\n' +
+    'Sheet: "SP Daily US"\n' +
+    'A=child_asin B=date C=units D=units_b2b\n' +
     'E=revenue F=revenue_b2b G=sessions H=page_views\n' +
     'I=buy_box% J=conversion%\n\n' +
 
-    'Daily Units (row 4 = exact date):\n' +
-    '=IFERROR(SUMIFS(\'SP Daily US\'!$C:$C, \'SP Daily US\'!$A:$A, $C5, \'SP Daily US\'!$B:$B, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
+    'Daily Units:\n' +
+    '=IFERROR(SUMIFS(\'SP Daily US\'!$C:$C,\n' +
+    '  \'SP Daily US\'!$A:$A, $C5,\n' +
+    '  \'SP Daily US\'!$B:$B, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
 
-    'Daily Revenue:\n' +
-    '=IFERROR(SUMIFS(\'SP Daily US\'!$E:$E, \'SP Daily US\'!$A:$A, $C5, \'SP Daily US\'!$B:$B, TEXT(G$4,"yyyy-mm-dd")), 0)\n\n' +
-
-    '── SP ROLLING (7/14/30/60 day) ──\n' +
-    'Cols: A=child_asin B=parent_asin C=currency\n' +
-    '7d: D=units E=revenue F=avg_units G=sessions H=conversion\n' +
-    '14d: I-M | 30d: N-R | 60d: S-W\n\n' +
+    '=== SP ROLLING ===\n' +
+    'Sheet: "SP Rolling US" (one row per ASIN)\n' +
+    'A=child_asin | 7d: D-H | 14d: I-M | 30d: N-R | 60d: S-W\n' +
+    'D=units E=revenue F=avg_units G=sessions H=conversion\n\n' +
 
     'Units Last 7 Days:\n' +
-    '=IFERROR(INDEX(\'SP Rolling US\'!$D:$D, MATCH($C5, \'SP Rolling US\'!$A:$A, 0)), 0)\n\n' +
+    '=IFERROR(INDEX(\'SP Rolling US\'!$D:$D,\n' +
+    '  MATCH($C5, \'SP Rolling US\'!$A:$A, 0)), 0)\n\n' +
 
-    'Avg Daily Units (30d):\n' +
-    '=IFERROR(INDEX(\'SP Rolling US\'!$P:$P, MATCH($C5, \'SP Rolling US\'!$A:$A, 0)), 0)\n\n' +
+    '=== SP INVENTORY ===\n' +
+    'Sheet: "SP Inventory US" (multi-SKU = multiple rows)\n' +
+    'A=asin D=fba_fulfillable L=fba_total M=awd_onhand P=awd_total\n\n' +
 
-    'Sessions Last 30 Days:\n' +
-    '=IFERROR(INDEX(\'SP Rolling US\'!$Q:$Q, MATCH($C5, \'SP Rolling US\'!$A:$A, 0)), 0)\n\n' +
+    'FBA Fulfillable (SUMIFS handles multi-SKU):\n' +
+    '=IFERROR(SUMIFS(\'SP Inventory US\'!$D:$D,\n' +
+    '  \'SP Inventory US\'!$A:$A, $C5), 0)\n\n' +
 
-    '── SP INVENTORY ──\n' +
-    'Cols: A=asin B=sku C=product_name D=fba_fulfillable\n' +
-    'E=fba_local F=fba_remote G=fba_reserved\n' +
-    'H-J=fba_inbound(working/shipped/receiving)\n' +
-    'K=fba_unsellable L=fba_total\n' +
-    'M=awd_onhand N=awd_inbound O=awd_available P=awd_total\n\n' +
+    '=== SP FEES ===\n' +
+    'Sheet: "SP Fees US" (one row per ASIN)\n' +
+    'A=asin E=est_fee_total H=settle_avg_fba K=storage_fee\n\n' +
 
-    'FBA Fulfillable (use SUMIFS for multi-SKU ASINs):\n' +
-    '=IFERROR(SUMIFS(\'SP Inventory US\'!$D:$D, \'SP Inventory US\'!$A:$A, $C5), 0)\n\n' +
+    'Est Total Fee:\n' +
+    '=IFERROR(INDEX(\'SP Fees US\'!$E:$E,\n' +
+    '  MATCH($C5, \'SP Fees US\'!$A:$A, 0)), 0)\n\n' +
 
-    'FBA Total:\n' +
-    '=IFERROR(SUMIFS(\'SP Inventory US\'!$L:$L, \'SP Inventory US\'!$A:$A, $C5), 0)\n\n' +
-
-    'AWD On-hand:\n' +
-    '=IFERROR(SUMIFS(\'SP Inventory US\'!$M:$M, \'SP Inventory US\'!$A:$A, $C5), 0)\n\n' +
-
-    'Product Name:\n' +
-    '=IFERROR(INDEX(\'SP Inventory US\'!$C:$C, MATCH($C5, \'SP Inventory US\'!$A:$A, 0)), "")\n\n' +
-
-    '── SP FEES ──\n' +
-    'Cols: A=asin B=sku C=size_tier D=price E=est_fee_total\n' +
-    'F=est_referral G=est_fba_fee H=settle_avg_fba I=settle_avg_referral\n' +
-    'J=settle_qty_basis K=storage_fee L=storage_avg_qty\n\n' +
-
-    'Estimated Total Fee:\n' +
-    '=IFERROR(INDEX(\'SP Fees US\'!$E:$E, MATCH($C5, \'SP Fees US\'!$A:$A, 0)), 0)\n\n' +
-
-    'Actual FBA Fee (from settlements, as positive):\n' +
-    '=ABS(IFERROR(INDEX(\'SP Fees US\'!$H:$H, MATCH($C5, \'SP Fees US\'!$A:$A, 0)), 0))\n\n' +
-
-    'Storage Fee:\n' +
-    '=IFERROR(INDEX(\'SP Fees US\'!$K:$K, MATCH($C5, \'SP Fees US\'!$A:$A, 0)), 0)\n\n' +
-
-    '── DUPLICATING TO OTHER COUNTRIES ──\n' +
-    'Use menu: Supabase Data → Duplicate Country Tab...\n' +
-    'It copies the tab, replaces all "US" refs with target country,\n' +
-    'and updates A2/B2 automatically.';
+    '=== TO ADD ANOTHER COUNTRY ===\n' +
+    'Menu > Supabase Data > Duplicate Country Tab\n' +
+    'Script replaces all "US" refs automatically.';
 
   SpreadsheetApp.getUi().alert(examples);
-}
-
-// ============================================
-// LEGACY FUNCTIONS (kept for reference)
-// ============================================
-
-function getMonthlyData(marketplaceId, config) {
-  return fetchFromSupabase('/rest/v1/sp_monthly_asin_data', {
-    'marketplace_id': 'eq.' + marketplaceId,
-    'select': 'month,child_asin,units_ordered,ordered_product_sales'
-  }, config);
-}
-
-function getWeeklyData(marketplaceId, config) {
-  return fetchFromSupabase('/rest/v1/sp_weekly_asin_data', {
-    'marketplace_id': 'eq.' + marketplaceId,
-    'select': 'week_start,iso_year,iso_week_number,child_asin,units_ordered,ordered_product_sales'
-  }, config);
-}
-
-function refreshCurrentSheet() {
-  SpreadsheetApp.getUi().alert('Use "Refresh Current Sheet" under Daily Sheets menu.');
-}
-
-function getDailyDataForRange(marketplaceId, startDate, endDate, config) {
-  return getDailyDataBetweenDates(marketplaceId, startDate, endDate, config);
 }

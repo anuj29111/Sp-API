@@ -1,23 +1,26 @@
 # Google Sheets Integration
 
 **Replaces:** GorillaROI ($600/month)
+**Current scope:** USA only (expand to other countries later via Duplicate Country Tab)
 
-## Architecture: Flat Dump Sheets + SUMIFS Formulas
+## How It Works
 
 ```
 SUPABASE DATABASE
         │
-        ├─── SP Data {country}      - Weekly/Monthly sales + traffic
-        ├─── SP Daily {country}     - Last 35 days of daily per-ASIN data
-        ├─── SP Rolling {country}   - Rolling 7/14/30/60 day metrics
-        ├─── SP Inventory {country} - Latest FBA + AWD inventory snapshot
-        └─── SP Fees {country}      - Per-unit fee estimates + settlement actuals + storage
+        │  Script pulls data every day (5 triggers for USA)
+        ▼
+5 DUMP SHEETS (hidden data tables, auto-refreshed):
+        ├── SP Data US       — Monthly & weekly sales/traffic (27+ months)
+        ├── SP Daily US      — Last 35 days of daily per-ASIN data
+        ├── SP Rolling US    — Rolling 7/14/30/60-day averages
+        ├── SP Inventory US  — Latest FBA + AWD stock levels
+        └── SP Fees US       — Fee estimates + settlement actuals + storage
 
-COUNTRY TABS (USA, Canada, UK, etc.)
-        │
-        └─── SUMIFS / INDEX-MATCH formulas referencing dump sheets above
-             Direct sheet references (e.g., 'SP Data US'!$D:$D)
-             NOT INDIRECT — avoids volatile recalculation overhead
+USA TAB (what you look at):
+        └── SUMIFS / INDEX-MATCH formulas read from dump sheets above
+            Uses cell references only: $C5=ASIN, G$4=date
+            ZERO hardcoded values in any formula
 ```
 
 ## Google Sheet
@@ -26,31 +29,24 @@ COUNTRY TABS (USA, Canada, UK, etc.)
 |----------|-------|
 | Name | API - Business Amazon 2026 |
 | URL | https://docs.google.com/spreadsheets/d/17nR0UFAOXul80mxzQeqBt2aAZ2szdYwVUWnc490NSbk |
-| Apps Script Project | https://script.google.com/u/2/home/projects/105bgL_S41PBK6M3CBOHkZ9A9-TXL3hIPJDu5ouk_D8nBT-p-LQKUvZvb/edit |
-| Local Script Copy | `/Sp-API/google-sheets/supabase_sales.gs` |
+| Apps Script | https://script.google.com/u/2/home/projects/105bgL_S41PBK6M3CBOHkZ9A9-TXL3hIPJDu5ouk_D8nBT-p-LQKUvZvb/edit |
+| Local Copy | `/Sp-API/google-sheets/supabase_sales.gs` |
 
-## Current Status
+## USA Tab Layout
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Supabase connection | ✅ Working | Test connection passes |
-| Pagination (>1000 rows) | ✅ Fixed | Range header pagination |
-| SP Data sheets | ✅ Working | All 10 marketplaces (weekly/monthly) |
-| SP Daily sheets | ✅ Working | All 10 marketplaces (last 35 days from deduped view) |
-| SP Rolling sheets | ✅ Working | All 10 marketplaces |
-| SP Inventory sheets | ✅ Working | FBA + AWD joined by SKU. EU EFN local/remote. AWD = NA only. |
-| SP Fees sheets | ✅ Working | Fee estimates + settlement actuals + storage |
-| Formula templates | ✅ Done | SUMIFS/INDEX-MATCH for all dump sheet types |
-| Duplicate country tab | ✅ Done | Script replaces sheet refs + updates A2/B2 |
-| Menu organization | ✅ Done | Refresh, Duplicate, Automation, Debug |
-| Triggers | ✅ Updated | 50 triggers (5 per country: sales, rolling, inventory, fees, daily) |
+| Cell | Purpose |
+|------|---------|
+| A2 | Marketplace UUID (from Script Config) |
+| B2 | Country code: `US` |
+| Row 4 | Date headers (actual Date values, not text) |
+| Column C | ASINs (manually maintained, starting row 5) |
 
-## Dump Sheet Column Reference
+## The 5 Dump Sheets
 
-### SP Data {country} (Weekly/Monthly)
+### 1. SP Data US (Monthly/Weekly)
 | Col | Header | Description |
 |-----|--------|-------------|
-| A | data_type | "monthly" or "weekly" |
+| A | data_type | `"monthly"` or `"weekly"` |
 | B | child_asin | ASIN |
 | C | period | YYYY-MM-DD (first-of-month or week_start Sunday) |
 | D | units_ordered | Total units |
@@ -62,7 +58,7 @@ COUNTRY TABS (USA, Canada, UK, etc.)
 | J | avg_buy_box_percentage | Buy box % |
 | K | avg_conversion_rate | Conversion rate |
 
-### SP Daily {country} (Last 35 Days)
+### 2. SP Daily US (Last 35 Days)
 | Col | Header | Description |
 |-----|--------|-------------|
 | A | child_asin | ASIN |
@@ -76,18 +72,18 @@ COUNTRY TABS (USA, Canada, UK, etc.)
 | I | buy_box_percentage | Buy box % |
 | J | unit_session_percentage | Conversion rate |
 
-### SP Rolling {country} (7/14/30/60 Day)
+### 3. SP Rolling US (7/14/30/60 Day)
 | Col | Header | Description |
 |-----|--------|-------------|
 | A | child_asin | ASIN |
 | B | parent_asin | Parent ASIN |
 | C | currency | Currency code |
 | D-H | 7d metrics | units, revenue, avg_units, sessions, conversion |
-| I-M | 14d metrics | (same pattern) |
-| N-R | 30d metrics | (same pattern) |
-| S-W | 60d metrics | (same pattern) |
+| I-M | 14d metrics | (same 5 columns) |
+| N-R | 30d metrics | (same 5 columns) |
+| S-W | 60d metrics | (same 5 columns) |
 
-### SP Inventory {country}
+### 4. SP Inventory US
 | Col | Header | Description |
 |-----|--------|-------------|
 | A | asin | ASIN |
@@ -105,7 +101,7 @@ COUNTRY TABS (USA, Canada, UK, etc.)
 | O | awd_available | AWD available |
 | P | awd_total | AWD total |
 
-### SP Fees {country}
+### 5. SP Fees US
 | Col | Header | Description |
 |-----|--------|-------------|
 | A | asin | ASIN |
@@ -121,105 +117,75 @@ COUNTRY TABS (USA, Canada, UK, etc.)
 | K | storage_fee_latest_month | Storage fee (latest month) |
 | L | storage_avg_qty_on_hand | Avg qty on hand for storage |
 
-## Country Tab Formula Reference
+## Formula Reference (Zero Hardcoding)
 
-Each country tab has:
-- **A2** = Marketplace UUID
-- **B2** = Country code (e.g., "US")
-- **Row 4** = Date headers
-- **Column C** = ASINs (manually maintained, starting row 5)
+Every formula reads from cell references only:
+- `$C5` = ASIN from your list
+- `G$4` = date from your header row
+- Sheet name = the only thing that changes per country (handled by Duplicate script)
 
 ### Monthly Units
 ```
 =IFERROR(SUMIFS('SP Data US'!$D:$D, 'SP Data US'!$A:$A, "monthly", 'SP Data US'!$B:$B, $C5, 'SP Data US'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)
 ```
-Row 4 must have first-of-month dates. Change `$D:$D` to `$F:$F` for revenue, `$H:$H` for sessions, `$K:$K` for conversion.
+Change `$D:$D` to: `$F:$F` revenue, `$H:$H` sessions, `$K:$K` conversion
 
 ### Weekly Units
 ```
 =IFERROR(SUMIFS('SP Data US'!$D:$D, 'SP Data US'!$A:$A, "weekly", 'SP Data US'!$B:$B, $C5, 'SP Data US'!$C:$C, TEXT(G$4,"yyyy-mm-dd")), 0)
 ```
-Row 4 must have Sunday dates (Amazon weeks = Sunday-Saturday).
+Row 4 must have **Sunday** dates (Amazon weeks = Sunday-Saturday)
 
 ### Daily Units
 ```
 =IFERROR(SUMIFS('SP Daily US'!$C:$C, 'SP Daily US'!$A:$A, $C5, 'SP Daily US'!$B:$B, TEXT(G$4,"yyyy-mm-dd")), 0)
 ```
 
-### Daily Average (calculated)
-```
-=IFERROR(G5 / DAY(EOMONTH(G$4, 0)), 0)
-```
-
-### Inventory (SUMIFS for multi-SKU ASINs)
-```
-FBA Fulfillable:  =IFERROR(SUMIFS('SP Inventory US'!$D:$D, 'SP Inventory US'!$A:$A, $C5), 0)
-FBA Total:        =IFERROR(SUMIFS('SP Inventory US'!$L:$L, 'SP Inventory US'!$A:$A, $C5), 0)
-AWD On-hand:      =IFERROR(SUMIFS('SP Inventory US'!$M:$M, 'SP Inventory US'!$A:$A, $C5), 0)
-Product Name:     =IFERROR(INDEX('SP Inventory US'!$C:$C, MATCH($C5, 'SP Inventory US'!$A:$A, 0)), "")
-```
-
-### Rolling Metrics (INDEX/MATCH — one row per ASIN)
+### Rolling (one row per ASIN → INDEX/MATCH)
 ```
 Units 7d:  =IFERROR(INDEX('SP Rolling US'!$D:$D, MATCH($C5, 'SP Rolling US'!$A:$A, 0)), 0)
 Units 30d: =IFERROR(INDEX('SP Rolling US'!$N:$N, MATCH($C5, 'SP Rolling US'!$A:$A, 0)), 0)
 ```
 
-### Fees
+### Inventory (multi-SKU → SUMIFS)
 ```
-Est Total Fee:     =IFERROR(INDEX('SP Fees US'!$E:$E, MATCH($C5, 'SP Fees US'!$A:$A, 0)), 0)
-Actual FBA Fee:    =ABS(IFERROR(INDEX('SP Fees US'!$H:$H, MATCH($C5, 'SP Fees US'!$A:$A, 0)), 0))
-Storage Fee:       =IFERROR(INDEX('SP Fees US'!$K:$K, MATCH($C5, 'SP Fees US'!$A:$A, 0)), 0)
+FBA Fulfillable: =IFERROR(SUMIFS('SP Inventory US'!$D:$D, 'SP Inventory US'!$A:$A, $C5), 0)
+FBA Total:       =IFERROR(SUMIFS('SP Inventory US'!$L:$L, 'SP Inventory US'!$A:$A, $C5), 0)
+AWD On-hand:     =IFERROR(SUMIFS('SP Inventory US'!$M:$M, 'SP Inventory US'!$A:$A, $C5), 0)
+Product Name:    =IFERROR(INDEX('SP Inventory US'!$C:$C, MATCH($C5, 'SP Inventory US'!$A:$A, 0)), "")
 ```
 
-## Duplicating to Other Countries
+### Fees (one row per ASIN → INDEX/MATCH)
+```
+Est Total Fee:  =IFERROR(INDEX('SP Fees US'!$E:$E, MATCH($C5, 'SP Fees US'!$A:$A, 0)), 0)
+Actual FBA Fee: =ABS(IFERROR(INDEX('SP Fees US'!$H:$H, MATCH($C5, 'SP Fees US'!$A:$A, 0)), 0))
+Storage Fee:    =IFERROR(INDEX('SP Fees US'!$K:$K, MATCH($C5, 'SP Fees US'!$A:$A, 0)), 0)
+```
 
-**Menu: Supabase Data → Duplicate Country Tab...**
+## 5 USA Triggers
 
-1. Enter source tab name (e.g., "USA")
-2. Enter target country code (e.g., "CA")
-3. Script duplicates the tab, replaces all `'SP Data US'` → `'SP Data CA'` (and all other dump sheet refs), updates A2 (marketplace UUID) and B2 (country code)
+| Trigger Function | Dump Sheet | What It Does |
+|-----------------|------------|--------------|
+| `trigger_US_sales` | SP Data US | Pulls monthly + weekly aggregates |
+| `trigger_US_daily` | SP Daily US | Pulls last 35 days from deduped view |
+| `trigger_US_rolling` | SP Rolling US | Pulls rolling 7/14/30/60d averages |
+| `trigger_US_inventory` | SP Inventory US | Pulls latest FBA + AWD snapshot |
+| `trigger_US_fees` | SP Fees US | Pulls fee estimates + settlements + storage |
 
-**Prerequisites**: Target country must have marketplace UUID in Script Config, and dump sheets should be populated (run "Refresh One Country" first).
+All run once daily at ~6:00 AM. Set up via Menu → Supabase Data → Automation → Setup Triggers.
 
-## Supported Marketplaces (Config Keys)
+## Adding More Countries Later
 
-| Country | Config Key | Region | Notes |
-|---------|-----------|--------|-------|
-| USA | US | NA | Full data (sales, rolling, inventory+AWD, fees+settlements+storage) |
-| Canada | CA | NA | Full data |
-| Mexico | MX | NA | Full data |
-| UK | UK | EU | Sales, rolling, inventory (EFN local/remote), fees+settlements. No AWD, no storage. |
-| Germany | DE | EU | Same as UK |
-| France | FR | EU | Sales, rolling, inventory, fees. No settlements yet, no AWD, no storage. |
-| Italy | IT | EU | Same as FR |
-| Spain | ES | EU | Same as FR |
-| Australia | AU | FE | Sales, rolling, inventory, fees+settlements. No AWD, no storage. |
-| UAE | UAE | UAE | Sales, rolling, inventory, fees. No settlements, no AWD, no storage. |
-
-## Trigger Schedule
-
-50 triggers total (5 per country), staggered 3 min apart starting at 6:00 AM:
-
-| Time | Country | Types |
-|------|---------|-------|
-| 6:00 | US | sales, rolling, inventory, fees, daily |
-| 6:03 | CA | same |
-| 6:06 | MX | same |
-| 6:09 | UK | same |
-| 6:12 | DE | same |
-| 6:15 | FR | same |
-| 6:18 | IT | same |
-| 6:21 | ES | same |
-| 6:24 | AU | same |
-| 6:27 | UAE | same |
+1. Add marketplace UUID to Script Config sheet
+2. Add trigger functions to the script (copy the 5 US lines, change "US" to new code)
+3. Run Menu → Refresh One Country → enter the country code (creates dump sheets)
+4. Run Menu → Duplicate Country Tab (copies USA tab, replaces all sheet refs)
+5. Run Menu → Setup Triggers (creates triggers for all configured countries)
 
 ## Pending Tasks
 
 1. Copy updated `supabase_sales.gs` to Apps Script editor
-2. Add marketplace UUIDs to Script Config sheet for: UK, DE, FR, IT, ES, AU, UAE
-3. Build USA tab formulas in the actual Google Sheet (map GorillaROI columns → new formulas)
-4. Run "Refresh One Country" for US to populate SP Daily US dump sheet
-5. Test all formulas against GorillaROI data for validation
-6. Duplicate USA tab to CA as proof of concept
-7. Re-setup triggers (menu → Automation → Setup Daily Triggers) to include the new 'daily' type
+2. Run "Refresh One Country" for US (creates SP Daily US dump sheet)
+3. Open USA tab → replace GorillaROI formulas with Supabase formulas
+4. Test formulas against GorillaROI data for validation
+5. Setup 5 triggers for USA
