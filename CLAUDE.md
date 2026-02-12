@@ -97,7 +97,9 @@ Full schema details: `Documentation/database-schema.md`
 - **Orders + S&T double-counting** (BUG FIXED Feb 2026): `sp_daily_asin_data` stores both `data_source='orders'` and `data_source='sales_traffic'` rows for the same ASIN+date. Queries must use `sp_daily_asin_data_deduped` view (prefers S&T over orders) to avoid summing both.
 - **Orders workflows are per-region**: 6 separate workflow files (`orders-na.yml`, `orders-mx.yml`, `orders-eu-core.yml`, `orders-eu-other.yml`, `orders-au.yml`, `orders-uae.yml`). Use `--marketplaces USA,CA` flag (comma-separated) to target specific marketplaces within a region. All cron times are Dubai GST converted to UTC.
 - **S&T daily-pull.yml runs once/day at 6AM UTC (10AM Dubai)**: Don't increase frequency — the 14-day refresh is heavy. Orders workflows handle near-real-time.
-- **Google Apps Script 6-min limit**: Each trigger function must complete within 6 min. Google Sheets integration uses per-country per-data-type trigger functions (40 total) staggered 3 min apart.
+- **Google Apps Script 6-min limit**: Each trigger function must complete within 6 min. Uses per-country per-data-type triggers (5 per country) staggered 3 min apart.
+- **Google Sheets date headers must be real Date values**: Row 4 dates must use `=Inputs!$T21` (actual date) with cell format `mmmyy` for display. NEVER use `=TEXT(date,"mmmyy")` — produces a string, and `TEXT(string,"yyyy-mm-dd")` fails silently. SUMIFS match against dump sheet's `"2025-01-01"` format requires real Date input.
+- **Google Sheets SUMIFS + ARRAYFORMULA don't work together**: Use `BYROW(range, LAMBDA(...))` instead. One formula per column, spills down all ASIN rows.
 - **Google Sheets `_safeAlert()` pattern**: Trigger context has no UI — `SpreadsheetApp.getUi()` throws. Always wrap alerts in try/catch with `Logger.log` fallback.
 - **IT/ES UUID was historically wrong**: Old docs had IT=`b8c9d0e1-...` (that's Spain) and ES=`d0e1f2a3-...` (that's Japan). Fixed Feb 2026. If any config still uses old values, correct them.
 
@@ -120,11 +122,12 @@ Full schema details: `Documentation/database-schema.md`
 - **SQP/SCP**: Running 4x/day until 2-year backfill complete
 
 ### Pending Work
+- **Google Sheets — DB Helper + universal formula**: Script is USA-only (5 triggers, 5 dump sheets working). Need to build a DB Helper sheet + ONE universal BYROW formula that works for all sections (monthly sales, weekly, daily, inventory, fees, ad spend, storage, reimbursements, etc). See `Documentation/google-sheets.md` and session notes below. **This is the active task.**
+- **Google Sheets — expand to other countries**: After USA formulas work, use `duplicateCountryTab()` to add CA, UK, DE, etc. Only change B2 country code.
 - **Monthly TST pull**: Add `--period-type MONTH` to Search Terms automation once monthly SQP backfill has enough data to match against
 - **Phase 4**: Product master table + COGS entry (via Google Sheets)
 - **Phase 5**: CM1/CM2 calculation views (settlements + COGS + POP ad spend)
 - **Phase 6**: Web dashboard
-- **Google Sheets — re-evaluate approach**: Current `supabase_sales.gs` has 40 per-country per-data-type triggers but needs architectural review. Next session: plan sheet structure, decide what data goes where, find a better approach for handling 10 countries × multiple data types within GAS 6-min limits. User needs to add marketplace UUIDs to Script Config for UK/DE/FR/IT/ES/AU/UAE before testing.
 
 ## Downstream Consumer: Chalkola ONE
 
