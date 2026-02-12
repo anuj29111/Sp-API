@@ -122,7 +122,7 @@ Full schema details: `Documentation/database-schema.md`
 - **SQP/SCP**: Running 4x/day until 2-year backfill complete
 
 ### Pending Work
-- **Google Sheets — DB Helper + universal formula**: Script is USA-only (5 triggers, 5 dump sheets working). Need to build a DB Helper sheet + ONE universal BYROW formula that works for all sections (monthly sales, weekly, daily, inventory, fees, ad spend, storage, reimbursements, etc). See `Documentation/google-sheets.md` and session notes below. **This is the active task.**
+- **Google Sheets — DB Helper + universal formula**: DB Helper sheet + `SPCOL()` / `SPDATA()` custom functions BUILT (in `supabase_sales.gs`). Need to: (1) copy script to Apps Script editor, (2) run "Setup DB Helper" from menu, (3) replace GorillaROI formulas with `=SPCOL($B$2, G$3, INDIRECT($D$2), G$4)` in each section column. See `Documentation/google-sheets.md`. POP ad spend sections not yet mapped (need POP dump sheet first).
 - **Google Sheets — expand to other countries**: After USA formulas work, use `duplicateCountryTab()` to add CA, UK, DE, etc. Only change B2 country code.
 - **Monthly TST pull**: Add `--period-type MONTH` to Search Terms automation once monthly SQP backfill has enough data to match against
 - **Phase 4**: Product master table + COGS entry (via Google Sheets)
