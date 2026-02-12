@@ -1077,10 +1077,11 @@ function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('Supabase Data')
     .addItem('Refresh One Country...', 'refreshOneCountry')
+    .addItem('Generate Formulas', 'generateFormulas')
     .addItem('Duplicate Country Tab...', 'duplicateCountryTab')
-    .addItem('Setup DB Helper', 'setupDBHelper')
     .addSeparator()
-    .addSubMenu(ui.createMenu('Automation')
+    .addSubMenu(ui.createMenu('Setup')
+      .addItem('Setup DB Helper', 'setupDBHelper')
       .addItem('Setup Triggers', 'setupTriggers')
       .addItem('Remove All Triggers', 'removeAllTriggers'))
     .addSeparator()
@@ -1115,286 +1116,158 @@ function _safeAlert(message) {
 
 
 // ============================================
-// CUSTOM FUNCTION: SPDATA()
+// GENERATE FORMULAS — AUTO-FILL NATIVE FORMULAS
 // ============================================
-// Usage in cell: =SPDATA($B$2, S$3, $C5, S$4)
-//   country  = "US" (from B2)
-//   section  = "Monthly Sales" (from row 3)
-//   asin     = "B07..." (from column C)
-//   date     = date value (from row 4) — optional for non-date sections
+// Reads row 3 (section names) and row 4 (dates) of the active country tab,
+// looks up each section in DB Helper, and writes the correct native
+// BYROW + SUMIFS / INDEX-MATCH formula into row 5 of each column.
 //
-// BYROW usage (one formula per section column, spills down):
-//   =BYROW(INDIRECT($D$2), LAMBDA(asin, SPDATA($B$2, S$3, asin, S$4)))
+// Native formulas are INSTANT (no 30-second limit) and scale to any data size.
 //
-// DB Helper sheet defines the mapping:
-//   Section Name → Sheet Prefix, Value Col, ASIN Col, Date Col, Data Type, Lookup Type
+// Usage: Menu > Supabase Data > Generate Formulas
+// Prerequisites: B2 = country code, D2 = ASIN range (e.g. C5:C270),
+//                Row 3 = section names, Row 4 = dates, DB Helper sheet exists.
 
 /**
- * Universal lookup into dump sheets. Replaces all SUMIFS/INDEX-MATCH formulas.
- *
- * Single cell: =SPDATA("US", "Monthly Sales", "B07ABC", DATE(2025,1,1))
- * With refs:   =SPDATA($B$2, S$3, $C5, S$4)
- *
- * @param {string} country Country code (e.g., "US")
- * @param {string} section Section name from row 3 (e.g., "Monthly Sales")
- * @param {string} asin The ASIN to look up
- * @param {date} date Optional date for time-series sections
- * @return {number} The looked-up value
- * @customfunction
+ * Converts a 0-indexed column number to a column letter.
+ * 0→A, 1→B, 2→C, ... 25→Z, 26→AA
  */
-function SPDATA(country, section, asin, date) {
-  if (!country || !section || !asin) return '';
-  if (typeof asin === 'string') asin = asin.trim();
-  if (!asin) return '';
-
-  var mapping = _getDBHelperMapping(section);
-  if (!mapping) return '#SECTION?';
-
-  var sheetName = mapping.sheetPrefix + ' ' + country;
-  var data = _getSheetData(sheetName);
-  if (!data) return '#SHEET?';
-
-  var lookupType = mapping.lookupType;
-
-  // --- SUMIFS with date (monthly, weekly, daily) ---
-  if (lookupType === 'sumifs_date') {
-    if (!date) return 0;
-    var dateStr = _formatDate(date);
-    var asinCol = mapping.asinCol;
-    var dateCol = mapping.dateCol;
-    var valueCol = mapping.valueCol;
-    var dataTypeFilter = mapping.dataType;
-
-    var sum = 0;
-    for (var i = 0; i < data.length; i++) {
-      var row = data[i];
-      if (String(row[asinCol]).trim() !== asin) continue;
-      if (String(row[dateCol]).trim() !== dateStr) continue;
-      if (dataTypeFilter && String(row[mapping.dataTypeCol]).trim() !== dataTypeFilter) continue;
-      sum += parseFloat(row[valueCol]) || 0;
-    }
-    return sum;
+function _colLetter(colIndex) {
+  var letter = '';
+  var n = colIndex;
+  while (n >= 0) {
+    letter = String.fromCharCode((n % 26) + 65) + letter;
+    n = Math.floor(n / 26) - 1;
   }
-
-  // --- SUMIFS without date (inventory — multi-SKU) ---
-  if (lookupType === 'sumifs') {
-    var sum2 = 0;
-    for (var j = 0; j < data.length; j++) {
-      if (String(data[j][mapping.asinCol]).trim() !== asin) continue;
-      sum2 += parseFloat(data[j][mapping.valueCol]) || 0;
-    }
-    return sum2;
-  }
-
-  // --- INDEX/MATCH (rolling, fees — one row per ASIN) ---
-  if (lookupType === 'match') {
-    for (var k = 0; k < data.length; k++) {
-      if (String(data[k][mapping.asinCol]).trim() === asin) {
-        return parseFloat(data[k][mapping.valueCol]) || 0;
-      }
-    }
-    return 0;
-  }
-
-  // --- TEXT match (product name, size tier — returns string) ---
-  if (lookupType === 'match_text') {
-    for (var m = 0; m < data.length; m++) {
-      if (String(data[m][mapping.asinCol]).trim() === asin) {
-        return data[m][mapping.valueCol] || '';
-      }
-    }
-    return '';
-  }
-
-  return '#TYPE?';
+  return letter;
 }
 
+/**
+ * Builds an INDIRECT reference like: INDIRECT("'"&"SP Data "&$B$2&"'!$D:$D")
+ * This dynamically resolves to e.g. 'SP Data US'!$D:$D based on the country in B2.
+ */
+function _indRef(sheetPrefix, colIndex) {
+  var colL = _colLetter(colIndex);
+  return 'INDIRECT("\'"&"' + sheetPrefix + ' "&$B$2&"\'!$' + colL + ':$' + colL + '")';
+}
 
 /**
- * Batch lookup: returns a column of values for all ASINs at once.
- * Much faster than BYROW + SPDATA because it reads data once and loops once.
+ * Auto-generates native formulas for the active country tab.
  *
- * Usage: =SPCOL($B$2, G$3, INDIRECT($D$2), G$4)
- *   Returns a vertical array — one value per ASIN in the range.
- *   Place in row 5 of each section column. Spills down automatically.
+ * Scans row 3 for section names (starting at column E / index 4).
+ * For each section found in DB Helper, writes a BYROW formula into row 5.
  *
- * @param {string} country Country code (e.g., "US")
- * @param {string} section Section name (e.g., "Monthly Sales")
- * @param {range} asins Range of ASINs (e.g., C5:C270)
- * @param {date} date Optional date for time-series sections
- * @return {Array} Vertical array of values
- * @customfunction
+ * Formula types generated:
+ *   sumifs_date (with data_type): BYROW + SUMIFS with date + data_type filter
+ *   sumifs_date (no data_type):   BYROW + SUMIFS with date only
+ *   sumifs:                       BYROW + SUMIFS (no date, e.g. inventory)
+ *   match:                        BYROW + INDEX/MATCH (returns number)
+ *   match_text:                   BYROW + INDEX/MATCH (returns text)
  */
-function SPCOL(country, section, asins, date) {
-  if (!country || !section) return '';
+function generateFormulas() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getActiveSheet();
+  var ui = SpreadsheetApp.getUi();
 
-  var mapping = _getDBHelperMapping(section);
-  if (!mapping) return [['#SECTION?']];
+  // Validate setup
+  var country = String(sheet.getRange('B2').getValue()).trim();
+  var asinRange = String(sheet.getRange('D2').getValue()).trim();
+  if (!country) { ui.alert('B2 must contain the country code (e.g., US)'); return; }
+  if (!asinRange) { ui.alert('D2 must contain the ASIN range (e.g., C5:C270)'); return; }
 
-  var sheetName = mapping.sheetPrefix + ' ' + country;
-  var data = _getSheetData(sheetName);
-  if (!data) return [['#SHEET?']];
+  // Read DB Helper
+  var helper = ss.getSheetByName('DB Helper');
+  if (!helper) { ui.alert('DB Helper sheet not found! Run Setup DB Helper first.'); return; }
 
-  // Flatten asins to a 1D array of strings
-  var asinList = [];
-  if (Array.isArray(asins)) {
-    for (var a = 0; a < asins.length; a++) {
-      var val = Array.isArray(asins[a]) ? asins[a][0] : asins[a];
-      asinList.push(String(val || '').trim());
-    }
-  } else {
-    asinList.push(String(asins || '').trim());
+  var helperData = helper.getDataRange().getValues();
+  var mappings = {};
+  for (var h = 1; h < helperData.length; h++) {
+    var row = helperData[h];
+    var name = String(row[0]).trim();
+    if (!name) continue;
+    mappings[name] = {
+      sheetPrefix: String(row[1]).trim(),
+      valueCol:    parseInt(row[2], 10),
+      asinCol:     parseInt(row[3], 10),
+      dateCol:     parseInt(row[4], 10) || 0,
+      dataTypeCol: parseInt(row[5], 10) || 0,
+      dataType:    String(row[6] || '').trim(),
+      lookupType:  String(row[7]).trim()
+    };
   }
 
-  var lookupType = mapping.lookupType;
-  var asinCol = mapping.asinCol;
-  var valueCol = mapping.valueCol;
-  var dateCol = mapping.dateCol;
-  var dataTypeCol = mapping.dataTypeCol;
-  var dataTypeFilter = mapping.dataType;
+  // Scan row 3 for section names (start at col E = index 4, go to last column)
+  var lastCol = sheet.getLastColumn();
+  if (lastCol < 5) { ui.alert('No section names found in row 3 (starting column E)'); return; }
 
-  // --- Build index for fast lookup ---
-  if (lookupType === 'sumifs_date') {
-    var dateStr = date ? _formatDate(date) : '';
-    if (!dateStr) {
-      var zeroes = [];
-      for (var z = 0; z < asinList.length; z++) zeroes.push([0]);
-      return zeroes;
+  var row3 = sheet.getRange(3, 5, 1, lastCol - 4).getValues()[0]; // E3 onwards
+  var generated = 0;
+  var skipped = [];
+
+  for (var c = 0; c < row3.length; c++) {
+    var sectionName = String(row3[c]).trim();
+    if (!sectionName) continue;
+
+    var m = mappings[sectionName];
+    if (!m) {
+      skipped.push(sectionName);
+      continue;
     }
 
-    // Build: {asin: sum}
-    var sumMap = {};
-    for (var i = 0; i < data.length; i++) {
-      var row = data[i];
-      if (String(row[dateCol]).trim() !== dateStr) continue;
-      if (dataTypeFilter && String(row[dataTypeCol]).trim() !== dataTypeFilter) continue;
-      var rAsin = String(row[asinCol]).trim();
-      sumMap[rAsin] = (sumMap[rAsin] || 0) + (parseFloat(row[valueCol]) || 0);
+    var colAddr = _colLetter(c + 4); // c=0 is column E (index 4)
+    var dateRef = colAddr + '$4';     // e.g. G$4
+    var formula = '';
+
+    if (m.lookupType === 'sumifs_date' && m.dataType) {
+      // SUMIFS with date + data_type filter (SP Data monthly/weekly)
+      formula = '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",IFERROR(SUMIFS(' +
+        _indRef(m.sheetPrefix, m.valueCol) + ',' +
+        _indRef(m.sheetPrefix, m.dataTypeCol) + ',"' + m.dataType + '",' +
+        _indRef(m.sheetPrefix, m.asinCol) + ',asin,' +
+        _indRef(m.sheetPrefix, m.dateCol) + ',TEXT(' + dateRef + ',"yyyy-mm-dd")' +
+        '),0))))';
+    }
+    else if (m.lookupType === 'sumifs_date') {
+      // SUMIFS with date only (SP Daily)
+      formula = '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",IFERROR(SUMIFS(' +
+        _indRef(m.sheetPrefix, m.valueCol) + ',' +
+        _indRef(m.sheetPrefix, m.asinCol) + ',asin,' +
+        _indRef(m.sheetPrefix, m.dateCol) + ',TEXT(' + dateRef + ',"yyyy-mm-dd")' +
+        '),0))))';
+    }
+    else if (m.lookupType === 'sumifs') {
+      // SUMIFS no date (inventory — multi-SKU sum)
+      formula = '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",IFERROR(SUMIFS(' +
+        _indRef(m.sheetPrefix, m.valueCol) + ',' +
+        _indRef(m.sheetPrefix, m.asinCol) + ',asin' +
+        '),0))))';
+    }
+    else if (m.lookupType === 'match') {
+      // INDEX/MATCH returning number
+      formula = '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",IFERROR(INDEX(' +
+        _indRef(m.sheetPrefix, m.valueCol) + ',' +
+        'MATCH(asin,' + _indRef(m.sheetPrefix, m.asinCol) + ',0)' +
+        '),0))))';
+    }
+    else if (m.lookupType === 'match_text') {
+      // INDEX/MATCH returning text
+      formula = '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",IFERROR(INDEX(' +
+        _indRef(m.sheetPrefix, m.valueCol) + ',' +
+        'MATCH(asin,' + _indRef(m.sheetPrefix, m.asinCol) + ',0)' +
+        '),""))))';
     }
 
-    var result = [];
-    for (var r = 0; r < asinList.length; r++) {
-      result.push([sumMap[asinList[r]] || 0]);
-    }
-    return result;
-  }
-
-  if (lookupType === 'sumifs') {
-    var sumMap2 = {};
-    for (var j = 0; j < data.length; j++) {
-      var rAsin2 = String(data[j][asinCol]).trim();
-      sumMap2[rAsin2] = (sumMap2[rAsin2] || 0) + (parseFloat(data[j][valueCol]) || 0);
-    }
-    var result2 = [];
-    for (var r2 = 0; r2 < asinList.length; r2++) {
-      result2.push([sumMap2[asinList[r2]] || 0]);
-    }
-    return result2;
-  }
-
-  if (lookupType === 'match') {
-    var matchMap = {};
-    for (var k = 0; k < data.length; k++) {
-      var rAsin3 = String(data[k][asinCol]).trim();
-      if (!(rAsin3 in matchMap)) {
-        matchMap[rAsin3] = parseFloat(data[k][valueCol]) || 0;
-      }
-    }
-    var result3 = [];
-    for (var r3 = 0; r3 < asinList.length; r3++) {
-      result3.push([matchMap[asinList[r3]] || 0]);
-    }
-    return result3;
-  }
-
-  if (lookupType === 'match_text') {
-    var textMap = {};
-    for (var m = 0; m < data.length; m++) {
-      var rAsin4 = String(data[m][asinCol]).trim();
-      if (!(rAsin4 in textMap)) {
-        textMap[rAsin4] = data[m][valueCol] || '';
-      }
-    }
-    var result4 = [];
-    for (var r4 = 0; r4 < asinList.length; r4++) {
-      result4.push([textMap[asinList[r4]] || '']);
-    }
-    return result4;
-  }
-
-  return [['#TYPE?']];
-}
-
-
-/**
- * Reads the DB Helper sheet and returns config for one section.
- * Caches the full DB Helper in script-level var to avoid re-reading per cell.
- */
-var _dbHelperCache = null;
-function _getDBHelperMapping(section) {
-  if (!_dbHelperCache) {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var helper = ss.getSheetByName('DB Helper');
-    if (!helper) return null;
-
-    var data = helper.getDataRange().getValues();
-    _dbHelperCache = {};
-    // Row 0 = headers: Section | Sheet Prefix | Value Col | ASIN Col | Date Col | Data Type Col | Data Type | Lookup Type
-    for (var i = 1; i < data.length; i++) {
-      var row = data[i];
-      var name = String(row[0]).trim();
-      if (!name) continue;
-      _dbHelperCache[name] = {
-        sheetPrefix: String(row[1]).trim(),
-        valueCol:    parseInt(row[2], 10),    // 0-indexed column number
-        asinCol:     parseInt(row[3], 10),
-        dateCol:     parseInt(row[4], 10) || 0,
-        dataTypeCol: parseInt(row[5], 10) || 0,
-        dataType:    String(row[6] || '').trim(),
-        lookupType:  String(row[7]).trim()    // sumifs_date, sumifs, match, match_text
-      };
+    if (formula) {
+      sheet.getRange(5, c + 5).setFormula(formula); // Row 5, column E+c
+      generated++;
     }
   }
-  return _dbHelperCache[section] || null;
-}
 
-
-/**
- * Caches sheet data in memory per execution (custom functions run many times).
- * Without this, each cell call would re-read the sheet.
- */
-var _sheetDataCache = {};
-function _getSheetData(sheetName) {
-  if (!(sheetName in _sheetDataCache)) {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName(sheetName);
-    if (!sheet) {
-      _sheetDataCache[sheetName] = null;
-      return null;
-    }
-    var lastRow = sheet.getLastRow();
-    if (lastRow <= 1) {
-      _sheetDataCache[sheetName] = [];
-      return [];
-    }
-    _sheetDataCache[sheetName] = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  var msg = 'Formulas generated: ' + generated;
+  if (skipped.length > 0) {
+    msg += '\n\nSkipped (not in DB Helper): ' + skipped.join(', ');
   }
-  return _sheetDataCache[sheetName];
-}
-
-
-/**
- * Formats a date value to YYYY-MM-DD string for matching dump sheet data.
- */
-function _formatDate(date) {
-  if (date instanceof Date) {
-    var y = date.getFullYear();
-    var m = String(date.getMonth() + 1).padStart(2, '0');
-    var d = String(date.getDate()).padStart(2, '0');
-    return y + '-' + m + '-' + d;
-  }
-  // Already a string
-  return String(date).trim().substring(0, 10);
+  ui.alert(msg);
 }
 
 
@@ -1528,9 +1401,9 @@ function setupDBHelper() {
   }
 
   _safeAlert('DB Helper created with ' + rows.length + ' section mappings.\n\n' +
-    'Now use =SPDATA($B$2, S$3, $C5, S$4) in country tab cells.\n\n' +
-    'BYROW (spills down all ASINs):\n' +
-    '=BYROW(INDIRECT($D$2), LAMBDA(a, SPDATA($B$2, S$3, a, S$4)))');
+    'Next step: Go to your country tab and run:\n' +
+    'Menu > Supabase Data > Generate Formulas\n\n' +
+    'This will auto-fill native SUMIFS/INDEX-MATCH formulas into row 5.');
 }
 
 
@@ -1540,30 +1413,19 @@ function setupDBHelper() {
 
 function showFormulaExamples() {
   var examples =
-    'FORMULA REFERENCE — SPDATA() CUSTOM FUNCTION\n' +
-    '==============================================\n\n' +
+    'FORMULA REFERENCE — NATIVE FORMULAS\n' +
+    '====================================\n\n' +
 
-    'SETUP:\n' +
-    '  1. Run: Menu > Supabase Data > Setup DB Helper\n' +
+    'SETUP (one-time per country tab):\n' +
+    '  1. Menu > Supabase Data > Setup DB Helper\n' +
     '  2. Country tab: B2=country code, D2=ASIN range (e.g., C5:C270)\n' +
-    '  3. Row 3 = section names, Row 4 = dates\n\n' +
+    '  3. Row 3 = section names, Row 4 = dates\n' +
+    '  4. Menu > Supabase Data > Generate Formulas\n\n' +
 
-    '=== SPCOL — BATCH COLUMN (RECOMMENDED) ===\n' +
-    '=SPCOL($B$2, G$3, INDIRECT($D$2), G$4)\n\n' +
-
-    '  $B$2 = country (US)\n' +
-    '  G$3  = section name (Monthly Sales)\n' +
-    '  INDIRECT($D$2) = ASIN range\n' +
-    '  G$4  = date (omit for inventory/fees/rolling)\n\n' +
-
-    '  Put in row 5 of each section column.\n' +
-    '  Spills down for all ASINs. No dragging.\n' +
-    '  One formula per column = fast.\n\n' +
-
-    '=== SPDATA — SINGLE CELL ===\n' +
-    '=SPDATA($B$2, S$3, $C5, S$4)\n\n' +
-
-    '  Use for one-off cells or debugging.\n\n' +
+    'Generate Formulas reads row 3, looks up each section\n' +
+    'in DB Helper, and writes native BYROW+SUMIFS or\n' +
+    'INDEX-MATCH formulas into row 5. These are instant\n' +
+    '(no Apps Script, no loading time).\n\n' +
 
     '=== SECTION NAMES (Row 3) ===\n' +
     'Monthly: Monthly Sales, Monthly Revenue, Monthly Sessions...\n' +
@@ -1579,7 +1441,7 @@ function showFormulaExamples() {
     '=== TO ADD A COUNTRY ===\n' +
     '1. Menu > Refresh One Country (creates dump sheets)\n' +
     '2. Menu > Duplicate Country Tab (copies formulas)\n' +
-    '   All formulas auto-adjust — only B2 changes.';
+    '   All formulas auto-adjust — B2 drives INDIRECT refs.';
 
   SpreadsheetApp.getUi().alert(examples);
 }
