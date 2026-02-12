@@ -1,0 +1,99 @@
+name: SP-API Gap Detector & Auto-Repair
+
+on:
+  # Run daily at 8 AM UTC (2 hours after main pull at 6 AM UTC)
+  # This gives the main pull time to complete before checking for gaps
+  schedule:
+    - cron: '0 8 * * *'
+
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Days to look back'
+        required: false
+        default: '45'
+      region:
+        description: 'Region to check (leave empty for all)'
+        required: false
+        type: choice
+        options:
+          - ''
+          - 'NA'
+          - 'EU'
+          - 'FE'
+          - 'UAE'
+      marketplace:
+        description: 'Specific marketplace (e.g., USA, UK)'
+        required: false
+      dry_run:
+        description: 'Dry run (report only, no repairs)'
+        type: boolean
+        default: false
+      max_repairs:
+        description: 'Max gaps to repair per run'
+        required: false
+        default: '10'
+
+jobs:
+  detect-and-repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run gap detector
+        env:
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+          SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SP_REFRESH_TOKEN_EU: ${{ secrets.SP_REFRESH_TOKEN_EU }}
+          SP_REFRESH_TOKEN_FE: ${{ secrets.SP_REFRESH_TOKEN_FE }}
+          SP_REFRESH_TOKEN_UAE: ${{ secrets.SP_REFRESH_TOKEN_UAE }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          CMD="python scripts/detect_gaps.py"
+
+          DAYS="${{ github.event.inputs.days }}"
+          CMD="$CMD --days ${DAYS:-45}"
+
+          if [ -n "${{ github.event.inputs.region }}" ]; then
+            CMD="$CMD --region ${{ github.event.inputs.region }}"
+          fi
+
+          if [ -n "${{ github.event.inputs.marketplace }}" ]; then
+            CMD="$CMD --marketplace ${{ github.event.inputs.marketplace }}"
+          fi
+
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            CMD="$CMD --dry-run"
+          fi
+
+          MAX="${{ github.event.inputs.max_repairs }}"
+          CMD="$CMD --max-repairs ${MAX:-10}"
+
+          echo "Running: $CMD"
+          $CMD || true  # Don't fail workflow if gaps remain (exit code 1)
+
+      - name: Post summary
+        if: always()
+        run: |
+          echo "## SP-API Gap Detection Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Days checked:** ${{ github.event.inputs.days || '45' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ github.event.inputs.region || 'All' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Mode:** ${{ github.event.inputs.dry_run == 'true' && 'Dry Run' || 'Auto-Repair' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY

@@ -253,14 +253,24 @@ def upsert_asin_data(
         }
         rows.append(row)
 
+    # Deduplicate rows by conflict key (date, marketplace_id, child_asin)
+    # Amazon S&T reports can contain duplicate child_asin entries, which causes
+    # "ON CONFLICT DO UPDATE command cannot affect row a second time" error.
+    # Keep last occurrence (later entries in the report tend to be more complete).
+    seen = {}
+    for row in rows:
+        key = (row["date"], row["marketplace_id"], row["child_asin"])
+        seen[key] = row
+    unique_rows = list(seen.values())
+
     # Batch upsert (Supabase handles ON CONFLICT)
-    if rows:
+    if unique_rows:
         client.table("sp_daily_asin_data").upsert(
-            rows,
+            unique_rows,
             on_conflict="date,marketplace_id,child_asin"
         ).execute()
 
-    return len(rows)
+    return len(unique_rows)
 
 
 def upsert_totals(
