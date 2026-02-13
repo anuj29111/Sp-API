@@ -180,6 +180,7 @@ def pull_orders_region(
     region: str = "NA",
     report_date: date = None,
     today_only: bool = False,
+    days: int = None,
     marketplace_filter: str = None,
     marketplaces_filter: List[str] = None,
     dry_run: bool = False
@@ -194,6 +195,7 @@ def pull_orders_region(
         region: API region
         report_date: Specific date to pull (overrides today/yesterday logic)
         today_only: Only pull today (skip yesterday catch-up)
+        days: Pull last N days (e.g., 14 for 14-day refresh). Overrides today/yesterday logic.
         marketplace_filter: Single marketplace to process (legacy, use marketplaces_filter)
         marketplaces_filter: List of marketplace codes to process (e.g., ['USA', 'CA'])
         dry_run: Show what would be pulled without upserting
@@ -224,6 +226,13 @@ def pull_orders_region(
         if report_date:
             # Specific date provided
             dates_to_pull = [report_date]
+        elif days:
+            # Multi-day refresh: pull last N days (today through N days ago)
+            dates_to_pull = [
+                get_marketplace_date(marketplace_code, days_ago=i)
+                for i in range(days)
+            ]
+            print(f"   📅 {marketplace_code}: refreshing last {days} days ({dates_to_pull[-1]} → {dates_to_pull[0]})")
         else:
             # Default: today + yesterday in marketplace timezone
             today = get_marketplace_date(marketplace_code, days_ago=0)
@@ -302,6 +311,12 @@ def main():
         help="Region to pull. Default: NA"
     )
     parser.add_argument(
+        "--days",
+        type=int,
+        help="Pull last N days of orders (e.g., --days 14 for 14-day refresh). "
+             "Useful for marketplaces where S&T has limited coverage (e.g., MX)."
+    )
+    parser.add_argument(
         "--today-only",
         action="store_true",
         help="Only pull today's data (skip yesterday catch-up)"
@@ -340,7 +355,11 @@ def main():
     print("\n" + "=" * 60)
     print("📦 NEAR-REAL-TIME ORDERS PULL")
     print("=" * 60)
-    print(f"📅 Date: {report_date or 'today + yesterday (per marketplace TZ)'}")
+    if args.days:
+        date_display = f"last {args.days} days"
+    else:
+        date_display = str(report_date) if report_date else "today + yesterday (per marketplace TZ)"
+    print(f"📅 Date: {date_display}")
     print(f"🌎 Region: {args.region}")
     print(f"🏪 Marketplaces: {mp_display}")
     if args.dry_run:
@@ -352,6 +371,7 @@ def main():
         region=args.region,
         report_date=report_date,
         today_only=args.today_only,
+        days=args.days,
         marketplace_filter=args.marketplace,
         marketplaces_filter=marketplaces_list,
         dry_run=args.dry_run

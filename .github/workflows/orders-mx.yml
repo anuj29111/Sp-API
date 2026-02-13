@@ -15,6 +15,9 @@ on:
         description: 'Only pull today (skip yesterday catch-up)'
         type: boolean
         default: false
+      days:
+        description: 'Refresh last N days (e.g., 14). Overrides date/today_only.'
+        required: false
       dry_run:
         description: 'Pull and aggregate but do not upsert to database'
         type: boolean
@@ -52,6 +55,10 @@ jobs:
             CMD="$CMD --date ${{ github.event.inputs.date }}"
           fi
 
+          if [ -n "${{ github.event.inputs.days }}" ]; then
+            CMD="$CMD --days ${{ github.event.inputs.days }}"
+          fi
+
           if [ "${{ github.event.inputs.today_only }}" = "true" ]; then
             CMD="$CMD --today-only"
           fi
@@ -70,4 +77,47 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Marketplace:** MX" >> $GITHUB_STEP_SUMMARY
           echo "**Schedule:** 4x/day (Dubai: 12p, 6p, 12a, 6a)" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+
+  # MX S&T only returns ~1 ASIN (Brand Registry limitation).
+  # Orders data is the primary source for MX — refresh last 14 days daily
+  # to capture attribution changes (same reason S&T does 14-day refresh).
+  # Runs only on the 8 AM UTC schedule (12 PM Dubai).
+  refresh-orders:
+    if: github.event.schedule == '0 8 * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs: pull-orders
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Refresh last 14 days orders (MX)
+        if: github.event.schedule == '0 8 * * *'
+        env:
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+          SP_REFRESH_TOKEN_NA: ${{ secrets.SP_REFRESH_TOKEN_NA }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          echo "🔄 Refreshing MX orders for last 14 days (S&T has limited coverage)"
+          python scripts/pull_orders_daily.py --region NA --marketplaces MX --days 14
+
+      - name: Post refresh summary
+        if: always() && github.event.schedule == '0 8 * * *'
+        run: |
+          echo "## MX Orders 14-Day Refresh (${{ job.status }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Purpose:** MX S&T only covers ~1 ASIN, orders is primary data source" >> $GITHUB_STEP_SUMMARY
           echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
