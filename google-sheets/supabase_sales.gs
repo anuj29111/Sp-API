@@ -1143,93 +1143,106 @@ function setupDBHelper() {
     sheet = ss.insertSheet('DB Helper');
   }
 
-  var headers = ['Section', 'Sheet Prefix', 'Value Col', 'ASIN Col', 'Date Col', 'DataType Col', 'Data Type', 'Lookup Type'];
+  // DB Helper layout — stores range strings for direct use with INDIRECT in formulas.
+  //   A = Section (goes in row 3 of country tab)
+  //   B = Sheet Prefix (e.g., "SP Data" → becomes "SP Data US" via $B$2)
+  //   C = Value Range (e.g., "$D:$D")
+  //   D = ASIN Range (e.g., "$B:$B")
+  //   E = Date Range (e.g., "$C:$C", blank for non-date sections)
+  //   F = DataType Range (e.g., "$A:$A", blank for sheets without data_type)
+  //   G = Data Type (e.g., "monthly", "weekly", blank)
+  //   H = Lookup Type (sumifs_date / sumifs / match / match_text)
+  var headers = ['Section', 'Sheet Prefix', 'Value Range', 'ASIN Range', 'Date Range', 'DataType Range', 'Data Type', 'Lookup Type'];
 
-  // All section mappings
-  // Col numbers are 0-indexed: SP Data US → A=0(data_type) B=1(asin) C=2(period) D=3(units) E=4(units_b2b) F=5(revenue) ...
+  // Dump sheet column mappings:
+  // SP Data:      A=data_type B=child_asin C=period D=units E=units_b2b F=revenue G=revenue_b2b H=sessions I=page_views J=buy_box% K=conversion%
+  // SP Daily:     A=child_asin B=date C=units D=units_b2b E=revenue F=revenue_b2b G=sessions H=page_views I=buy_box% J=conversion%
+  // SP Rolling:   A=child_asin B=parent C=currency D-H=7d I-M=14d N-R=30d S-W=60d
+  // SP Inventory: A=asin B=sku C=product_name D=fba_fulfillable E=fba_local F=fba_remote G=reserved H-J=inbound K=unsellable L=fba_total M-P=awd
+  // SP Fees:      A=asin B=sku C=size_tier D=price E=est_total F=est_referral G=est_fba H-J=settlement K=storage_fee L=storage_qty
   var rows = [
     // === SP Data (monthly) ===
-    ['Monthly Sales',        'SP Data', 3, 1, 2, 0, 'monthly', 'sumifs_date'],
-    ['Monthly Sales B2B',    'SP Data', 4, 1, 2, 0, 'monthly', 'sumifs_date'],
-    ['Monthly Revenue',      'SP Data', 5, 1, 2, 0, 'monthly', 'sumifs_date'],
-    ['Monthly Revenue B2B',  'SP Data', 6, 1, 2, 0, 'monthly', 'sumifs_date'],
-    ['Monthly Sessions',     'SP Data', 7, 1, 2, 0, 'monthly', 'sumifs_date'],
-    ['Monthly Page Views',   'SP Data', 8, 1, 2, 0, 'monthly', 'sumifs_date'],
-    ['Monthly Buy Box %',    'SP Data', 9, 1, 2, 0, 'monthly', 'sumifs_date'],
-    ['Monthly Conversion %', 'SP Data', 10, 1, 2, 0, 'monthly', 'sumifs_date'],
+    ['Monthly Sales',        'SP Data', '$D:$D', '$B:$B', '$C:$C', '$A:$A', 'monthly', 'sumifs_date'],
+    ['Monthly Sales B2B',    'SP Data', '$E:$E', '$B:$B', '$C:$C', '$A:$A', 'monthly', 'sumifs_date'],
+    ['Monthly Revenue',      'SP Data', '$F:$F', '$B:$B', '$C:$C', '$A:$A', 'monthly', 'sumifs_date'],
+    ['Monthly Revenue B2B',  'SP Data', '$G:$G', '$B:$B', '$C:$C', '$A:$A', 'monthly', 'sumifs_date'],
+    ['Monthly Sessions',     'SP Data', '$H:$H', '$B:$B', '$C:$C', '$A:$A', 'monthly', 'sumifs_date'],
+    ['Monthly Page Views',   'SP Data', '$I:$I', '$B:$B', '$C:$C', '$A:$A', 'monthly', 'sumifs_date'],
+    ['Monthly Buy Box %',    'SP Data', '$J:$J', '$B:$B', '$C:$C', '$A:$A', 'monthly', 'sumifs_date'],
+    ['Monthly Conversion %', 'SP Data', '$K:$K', '$B:$B', '$C:$C', '$A:$A', 'monthly', 'sumifs_date'],
 
     // === SP Data (weekly) ===
-    ['Weekly Sales',        'SP Data', 3, 1, 2, 0, 'weekly', 'sumifs_date'],
-    ['Weekly Sales B2B',    'SP Data', 4, 1, 2, 0, 'weekly', 'sumifs_date'],
-    ['Weekly Revenue',      'SP Data', 5, 1, 2, 0, 'weekly', 'sumifs_date'],
-    ['Weekly Revenue B2B',  'SP Data', 6, 1, 2, 0, 'weekly', 'sumifs_date'],
-    ['Weekly Sessions',     'SP Data', 7, 1, 2, 0, 'weekly', 'sumifs_date'],
-    ['Weekly Page Views',   'SP Data', 8, 1, 2, 0, 'weekly', 'sumifs_date'],
-    ['Weekly Buy Box %',    'SP Data', 9, 1, 2, 0, 'weekly', 'sumifs_date'],
-    ['Weekly Conversion %', 'SP Data', 10, 1, 2, 0, 'weekly', 'sumifs_date'],
+    ['Weekly Sales',        'SP Data', '$D:$D', '$B:$B', '$C:$C', '$A:$A', 'weekly', 'sumifs_date'],
+    ['Weekly Sales B2B',    'SP Data', '$E:$E', '$B:$B', '$C:$C', '$A:$A', 'weekly', 'sumifs_date'],
+    ['Weekly Revenue',      'SP Data', '$F:$F', '$B:$B', '$C:$C', '$A:$A', 'weekly', 'sumifs_date'],
+    ['Weekly Revenue B2B',  'SP Data', '$G:$G', '$B:$B', '$C:$C', '$A:$A', 'weekly', 'sumifs_date'],
+    ['Weekly Sessions',     'SP Data', '$H:$H', '$B:$B', '$C:$C', '$A:$A', 'weekly', 'sumifs_date'],
+    ['Weekly Page Views',   'SP Data', '$I:$I', '$B:$B', '$C:$C', '$A:$A', 'weekly', 'sumifs_date'],
+    ['Weekly Buy Box %',    'SP Data', '$J:$J', '$B:$B', '$C:$C', '$A:$A', 'weekly', 'sumifs_date'],
+    ['Weekly Conversion %', 'SP Data', '$K:$K', '$B:$B', '$C:$C', '$A:$A', 'weekly', 'sumifs_date'],
 
-    // === SP Daily ===
-    ['Daily Sales',        'SP Daily', 2, 0, 1, '', '', 'sumifs_date'],
-    ['Daily Sales B2B',    'SP Daily', 3, 0, 1, '', '', 'sumifs_date'],
-    ['Daily Revenue',      'SP Daily', 4, 0, 1, '', '', 'sumifs_date'],
-    ['Daily Revenue B2B',  'SP Daily', 5, 0, 1, '', '', 'sumifs_date'],
-    ['Daily Sessions',     'SP Daily', 6, 0, 1, '', '', 'sumifs_date'],
-    ['Daily Page Views',   'SP Daily', 7, 0, 1, '', '', 'sumifs_date'],
-    ['Daily Buy Box %',    'SP Daily', 8, 0, 1, '', '', 'sumifs_date'],
-    ['Daily Conversion %', 'SP Daily', 9, 0, 1, '', '', 'sumifs_date'],
+    // === SP Daily (no data_type column) ===
+    ['Daily Sales',        'SP Daily', '$C:$C', '$A:$A', '$B:$B', '', '', 'sumifs_date'],
+    ['Daily Sales B2B',    'SP Daily', '$D:$D', '$A:$A', '$B:$B', '', '', 'sumifs_date'],
+    ['Daily Revenue',      'SP Daily', '$E:$E', '$A:$A', '$B:$B', '', '', 'sumifs_date'],
+    ['Daily Revenue B2B',  'SP Daily', '$F:$F', '$A:$A', '$B:$B', '', '', 'sumifs_date'],
+    ['Daily Sessions',     'SP Daily', '$G:$G', '$A:$A', '$B:$B', '', '', 'sumifs_date'],
+    ['Daily Page Views',   'SP Daily', '$H:$H', '$A:$A', '$B:$B', '', '', 'sumifs_date'],
+    ['Daily Buy Box %',    'SP Daily', '$I:$I', '$A:$A', '$B:$B', '', '', 'sumifs_date'],
+    ['Daily Conversion %', 'SP Daily', '$J:$J', '$A:$A', '$B:$B', '', '', 'sumifs_date'],
 
-    // === SP Rolling (no date — one row per ASIN) ===
-    ['Rolling 7d Units',       'SP Rolling', 3, 0, '', '', '', 'match'],
-    ['Rolling 7d Revenue',     'SP Rolling', 4, 0, '', '', '', 'match'],
-    ['Rolling 7d Avg Units',   'SP Rolling', 5, 0, '', '', '', 'match'],
-    ['Rolling 7d Sessions',    'SP Rolling', 6, 0, '', '', '', 'match'],
-    ['Rolling 7d Conversion',  'SP Rolling', 7, 0, '', '', '', 'match'],
-    ['Rolling 14d Units',      'SP Rolling', 8, 0, '', '', '', 'match'],
-    ['Rolling 14d Revenue',    'SP Rolling', 9, 0, '', '', '', 'match'],
-    ['Rolling 14d Avg Units',  'SP Rolling', 10, 0, '', '', '', 'match'],
-    ['Rolling 14d Sessions',   'SP Rolling', 11, 0, '', '', '', 'match'],
-    ['Rolling 14d Conversion', 'SP Rolling', 12, 0, '', '', '', 'match'],
-    ['Rolling 30d Units',      'SP Rolling', 13, 0, '', '', '', 'match'],
-    ['Rolling 30d Revenue',    'SP Rolling', 14, 0, '', '', '', 'match'],
-    ['Rolling 30d Avg Units',  'SP Rolling', 15, 0, '', '', '', 'match'],
-    ['Rolling 30d Sessions',   'SP Rolling', 16, 0, '', '', '', 'match'],
-    ['Rolling 30d Conversion', 'SP Rolling', 17, 0, '', '', '', 'match'],
-    ['Rolling 60d Units',      'SP Rolling', 18, 0, '', '', '', 'match'],
-    ['Rolling 60d Revenue',    'SP Rolling', 19, 0, '', '', '', 'match'],
-    ['Rolling 60d Avg Units',  'SP Rolling', 20, 0, '', '', '', 'match'],
-    ['Rolling 60d Sessions',   'SP Rolling', 21, 0, '', '', '', 'match'],
-    ['Rolling 60d Conversion', 'SP Rolling', 22, 0, '', '', '', 'match'],
+    // === SP Rolling (no date — one row per ASIN, INDEX/MATCH) ===
+    ['Rolling 7d Units',       'SP Rolling', '$D:$D', '$A:$A', '', '', '', 'match'],
+    ['Rolling 7d Revenue',     'SP Rolling', '$E:$E', '$A:$A', '', '', '', 'match'],
+    ['Rolling 7d Avg Units',   'SP Rolling', '$F:$F', '$A:$A', '', '', '', 'match'],
+    ['Rolling 7d Sessions',    'SP Rolling', '$G:$G', '$A:$A', '', '', '', 'match'],
+    ['Rolling 7d Conversion',  'SP Rolling', '$H:$H', '$A:$A', '', '', '', 'match'],
+    ['Rolling 14d Units',      'SP Rolling', '$I:$I', '$A:$A', '', '', '', 'match'],
+    ['Rolling 14d Revenue',    'SP Rolling', '$J:$J', '$A:$A', '', '', '', 'match'],
+    ['Rolling 14d Avg Units',  'SP Rolling', '$K:$K', '$A:$A', '', '', '', 'match'],
+    ['Rolling 14d Sessions',   'SP Rolling', '$L:$L', '$A:$A', '', '', '', 'match'],
+    ['Rolling 14d Conversion', 'SP Rolling', '$M:$M', '$A:$A', '', '', '', 'match'],
+    ['Rolling 30d Units',      'SP Rolling', '$N:$N', '$A:$A', '', '', '', 'match'],
+    ['Rolling 30d Revenue',    'SP Rolling', '$O:$O', '$A:$A', '', '', '', 'match'],
+    ['Rolling 30d Avg Units',  'SP Rolling', '$P:$P', '$A:$A', '', '', '', 'match'],
+    ['Rolling 30d Sessions',   'SP Rolling', '$Q:$Q', '$A:$A', '', '', '', 'match'],
+    ['Rolling 30d Conversion', 'SP Rolling', '$R:$R', '$A:$A', '', '', '', 'match'],
+    ['Rolling 60d Units',      'SP Rolling', '$S:$S', '$A:$A', '', '', '', 'match'],
+    ['Rolling 60d Revenue',    'SP Rolling', '$T:$T', '$A:$A', '', '', '', 'match'],
+    ['Rolling 60d Avg Units',  'SP Rolling', '$U:$U', '$A:$A', '', '', '', 'match'],
+    ['Rolling 60d Sessions',   'SP Rolling', '$V:$V', '$A:$A', '', '', '', 'match'],
+    ['Rolling 60d Conversion', 'SP Rolling', '$W:$W', '$A:$A', '', '', '', 'match'],
 
-    // === SP Inventory (no date — SUMIFS for multi-SKU) ===
-    ['FBA Fulfillable',  'SP Inventory', 3, 0, '', '', '', 'sumifs'],
-    ['FBA Local',        'SP Inventory', 4, 0, '', '', '', 'sumifs'],
-    ['FBA Remote',       'SP Inventory', 5, 0, '', '', '', 'sumifs'],
-    ['FBA Reserved',     'SP Inventory', 6, 0, '', '', '', 'sumifs'],
-    ['FBA Inbound Work', 'SP Inventory', 7, 0, '', '', '', 'sumifs'],
-    ['FBA Inbound Ship', 'SP Inventory', 8, 0, '', '', '', 'sumifs'],
-    ['FBA Inbound Recv', 'SP Inventory', 9, 0, '', '', '', 'sumifs'],
-    ['FBA Unsellable',   'SP Inventory', 10, 0, '', '', '', 'sumifs'],
-    ['FBA Total',        'SP Inventory', 11, 0, '', '', '', 'sumifs'],
-    ['AWD On-hand',      'SP Inventory', 12, 0, '', '', '', 'sumifs'],
-    ['AWD Inbound',      'SP Inventory', 13, 0, '', '', '', 'sumifs'],
-    ['AWD Available',    'SP Inventory', 14, 0, '', '', '', 'sumifs'],
-    ['AWD Total',        'SP Inventory', 15, 0, '', '', '', 'sumifs'],
-    ['Product Name',     'SP Inventory', 2, 0, '', '', '', 'match_text'],
+    // === SP Inventory (no date — SUMIFS for multi-SKU ASINs) ===
+    ['FBA Fulfillable',  'SP Inventory', '$D:$D', '$A:$A', '', '', '', 'sumifs'],
+    ['FBA Local',        'SP Inventory', '$E:$E', '$A:$A', '', '', '', 'sumifs'],
+    ['FBA Remote',       'SP Inventory', '$F:$F', '$A:$A', '', '', '', 'sumifs'],
+    ['FBA Reserved',     'SP Inventory', '$G:$G', '$A:$A', '', '', '', 'sumifs'],
+    ['FBA Inbound Work', 'SP Inventory', '$H:$H', '$A:$A', '', '', '', 'sumifs'],
+    ['FBA Inbound Ship', 'SP Inventory', '$I:$I', '$A:$A', '', '', '', 'sumifs'],
+    ['FBA Inbound Recv', 'SP Inventory', '$J:$J', '$A:$A', '', '', '', 'sumifs'],
+    ['FBA Unsellable',   'SP Inventory', '$K:$K', '$A:$A', '', '', '', 'sumifs'],
+    ['FBA Total',        'SP Inventory', '$L:$L', '$A:$A', '', '', '', 'sumifs'],
+    ['AWD On-hand',      'SP Inventory', '$M:$M', '$A:$A', '', '', '', 'sumifs'],
+    ['AWD Inbound',      'SP Inventory', '$N:$N', '$A:$A', '', '', '', 'sumifs'],
+    ['AWD Available',    'SP Inventory', '$O:$O', '$A:$A', '', '', '', 'sumifs'],
+    ['AWD Total',        'SP Inventory', '$P:$P', '$A:$A', '', '', '', 'sumifs'],
+    ['Product Name',     'SP Inventory', '$C:$C', '$A:$A', '', '', '', 'match_text'],
 
-    // === SP Fees (no date — one row per ASIN) ===
-    ['Size Tier',            'SP Fees', 2, 0, '', '', '', 'match_text'],
-    ['Price',                'SP Fees', 3, 0, '', '', '', 'match'],
-    ['Est Fee Total',        'SP Fees', 4, 0, '', '', '', 'match'],
-    ['Est Referral Fee',     'SP Fees', 5, 0, '', '', '', 'match'],
-    ['Est FBA Fee',          'SP Fees', 6, 0, '', '', '', 'match'],
-    ['Settle Avg FBA Fee',   'SP Fees', 7, 0, '', '', '', 'match'],
-    ['Settle Avg Referral',  'SP Fees', 8, 0, '', '', '', 'match'],
-    ['Settle FBA Qty Basis', 'SP Fees', 9, 0, '', '', '', 'match'],
-    ['Storage Fee',          'SP Fees', 10, 0, '', '', '', 'match'],
-    ['Storage Avg Qty',      'SP Fees', 11, 0, '', '', '', 'match'],
+    // === SP Fees (no date — one row per ASIN, INDEX/MATCH) ===
+    ['Size Tier',            'SP Fees', '$C:$C', '$A:$A', '', '', '', 'match_text'],
+    ['Price',                'SP Fees', '$D:$D', '$A:$A', '', '', '', 'match'],
+    ['Est Fee Total',        'SP Fees', '$E:$E', '$A:$A', '', '', '', 'match'],
+    ['Est Referral Fee',     'SP Fees', '$F:$F', '$A:$A', '', '', '', 'match'],
+    ['Est FBA Fee',          'SP Fees', '$G:$G', '$A:$A', '', '', '', 'match'],
+    ['Settle Avg FBA Fee',   'SP Fees', '$H:$H', '$A:$A', '', '', '', 'match'],
+    ['Settle Avg Referral',  'SP Fees', '$I:$I', '$A:$A', '', '', '', 'match'],
+    ['Settle FBA Qty Basis', 'SP Fees', '$J:$J', '$A:$A', '', '', '', 'match'],
+    ['Storage Fee',          'SP Fees', '$K:$K', '$A:$A', '', '', '', 'match'],
+    ['Storage Avg Qty',      'SP Fees', '$L:$L', '$A:$A', '', '', '', 'match'],
 
-    // === Aliases (match user's existing row 3 names) ===
-    ['Storage',              'SP Fees', 10, 0, '', '', '', 'match'],
+    // === Aliases ===
+    ['Storage',              'SP Fees', '$K:$K', '$A:$A', '', '', '', 'match'],
   ];
 
   // Write headers + data
@@ -1255,28 +1268,28 @@ function setupDBHelper() {
 
 function showFormulaExamples() {
   var examples =
-    'FORMULA REFERENCE — NATIVE FORMULAS\n' +
-    '====================================\n\n' +
+    'FORMULA REFERENCE — DB Helper Driven (No Hardcoding)\n' +
+    '=====================================================\n\n' +
 
-    'All formulas use INDIRECT to dynamically reference dump sheets from B2 (country code).\n' +
-    'Change B2 to switch countries — all formulas auto-update.\n\n' +
+    'Row 3 = section name from DB Helper. $B$2 = country code. $D$2 = ASIN range.\n' +
+    'LET(s,...) builds the sheet ref once: \'SP Data US\'!\n' +
+    'Change G to whatever column you are placing the formula in.\n\n' +
 
-    '=== MONTHLY/WEEKLY SALES (SP Data) ===\n' +
-    '=IFERROR(SUMIFS(INDIRECT("\'SP Data "&$B$2&"\'!$D:$D"),INDIRECT("\'SP Data "&$B$2&"\'!$A:$A"),"monthly",INDIRECT("\'SP Data "&$B$2&"\'!$B:$B"),$C5,INDIRECT("\'SP Data "&$B$2&"\'!$C:$C"),TEXT(F$4,"yyyy-mm-dd")),0)\n\n' +
-    'SP Data cols: A=data_type, B=asin, C=period, D=units, E=units_b2b, F=revenue, G=revenue_b2b, H=sessions, I=page_views, J=buy_box%, K=conversion%\n\n' +
+    '=== A: MONTHLY/WEEKLY (data_type + date) ===\n' +
+    'Row 3 = Monthly Sales, Weekly Revenue, etc.\n' +
+    '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",LET(s,"\'"&VLOOKUP(G$3,\'DB Helper\'!$A:$B,2,0)&" "&$B$2&"\'!",IFERROR(SUMIFS(INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$C,3,0)),INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$F,6,0)),VLOOKUP(G$3,\'DB Helper\'!$A:$G,7,0),INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$D,4,0)),asin,INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$E,5,0)),TEXT(G$4,"yyyy-mm-dd")),0)))))\n\n' +
 
-    '=== DAILY SALES (SP Daily) ===\n' +
-    '=IFERROR(SUMIFS(INDIRECT("\'SP Daily "&$B$2&"\'!$C:$C"),INDIRECT("\'SP Daily "&$B$2&"\'!$A:$A"),$C5,INDIRECT("\'SP Daily "&$B$2&"\'!$B:$B"),TEXT(F$4,"yyyy-mm-dd")),0)\n\n' +
-    'SP Daily cols: A=asin, B=date, C=units, D=units_b2b, E=revenue, F=revenue_b2b, G=sessions, H=page_views, I=buy_box%, J=conversion%\n\n' +
+    '=== B: DAILY (date, no data_type) ===\n' +
+    'Row 3 = Daily Sales, Daily Revenue, etc.\n' +
+    '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",LET(s,"\'"&VLOOKUP(G$3,\'DB Helper\'!$A:$B,2,0)&" "&$B$2&"\'!",IFERROR(SUMIFS(INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$C,3,0)),INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$D,4,0)),asin,INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$E,5,0)),TEXT(G$4,"yyyy-mm-dd")),0)))))\n\n' +
 
-    '=== INVENTORY (SP Inventory — SUMIFS, no date) ===\n' +
-    '=IFERROR(SUMIFS(INDIRECT("\'SP Inventory "&$B$2&"\'!$D:$D"),INDIRECT("\'SP Inventory "&$B$2&"\'!$A:$A"),$C5),0)\n\n' +
-    'SP Inventory cols: A=asin, B=sku, C=name, D=fba_fulfillable, E=fba_local, F=fba_remote, G=reserved, H-J=inbound, K=unsellable, L=fba_total, M=awd_onhand, N=awd_inbound, O=awd_available, P=awd_total\n\n' +
+    '=== C: INVENTORY (SUMIFS by ASIN only) ===\n' +
+    'Row 3 = FBA Fulfillable, FBA Total, AWD Total, etc.\n' +
+    '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",LET(s,"\'"&VLOOKUP(G$3,\'DB Helper\'!$A:$B,2,0)&" "&$B$2&"\'!",IFERROR(SUMIFS(INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$C,3,0)),INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$D,4,0)),asin),0)))))\n\n' +
 
-    '=== ROLLING / FEES (INDEX-MATCH, one row per ASIN) ===\n' +
-    '=IFERROR(INDEX(INDIRECT("\'SP Rolling "&$B$2&"\'!$D:$D"),MATCH($C5,INDIRECT("\'SP Rolling "&$B$2&"\'!$A:$A"),0)),0)\n\n' +
-    'SP Rolling cols: A=asin, B=parent, C=currency, D=units_7d, E=rev_7d, F=avg_7d, G=sess_7d, H=conv_7d, I-M=14d, N-R=30d, S-W=60d\n' +
-    'SP Fees cols: A=asin, B=sku, C=size_tier, D=price, E=est_total, F=est_referral, G=est_fba, H=settle_fba, I=settle_referral, J=settle_qty, K=storage_fee, L=storage_qty';
+    '=== D: ROLLING/FEES (INDEX-MATCH) ===\n' +
+    'Row 3 = Rolling 7d Units, Price, Product Name, etc.\n' +
+    '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",LET(s,"\'"&VLOOKUP(G$3,\'DB Helper\'!$A:$B,2,0)&" "&$B$2&"\'!",IFERROR(INDEX(INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$C,3,0)),MATCH(asin,INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$D,4,0)),0)),0)))))';
 
   SpreadsheetApp.getUi().alert(examples);
 }
