@@ -305,9 +305,9 @@ def aggregate_orders_by_asin(
     """
     Aggregate order line items by ASIN.
 
-    Groups by ASIN and counts:
-    - COUNT line items → units_ordered (each row = 1 unit, matching Amazon's S&T definition)
-    - item-price → ordered_product_sales (total for line item, not per-unit)
+    Groups by ASIN and sums:
+    - SUM(quantity) → units_ordered (matches Amazon S&T "Units Ordered")
+    - item-price → ordered_product_sales (total for line item = quantity × unit price)
     - COUNT DISTINCT amazon-order-id → total_order_items
 
     Excludes Cancelled orders only (Pending are included — they're real orders
@@ -367,10 +367,14 @@ def aggregate_orders_by_asin(
         # Get currency
         currency = row.get("currency", "").strip()
 
-        # Aggregate
-        # Each line item = 1 unit ordered (matches Amazon S&T / Seller Central definition)
-        # NOT summing quantity — quantity > 1 means multi-pack, but Amazon counts it as 1 unit
-        asin_data[asin]["units_ordered"] += 1
+        # Parse quantity (= units in this line item)
+        try:
+            quantity = int(row.get("quantity", "0").strip())
+        except (ValueError, TypeError):
+            quantity = 0
+
+        # Aggregate — SUM(quantity) = Amazon's "Units Ordered"
+        asin_data[asin]["units_ordered"] += quantity
         asin_data[asin]["ordered_product_sales"] += item_price
         if order_id:
             asin_data[asin]["order_ids"].add(order_id)
