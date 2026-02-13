@@ -427,7 +427,34 @@ def upsert_orders_asin_data(
     if skipped > 0:
         print(f"  ⏭️  Skipped {skipped} ASINs (already have S&T data)")
 
-    # Step 3: Upsert in chunks
+    # Step 3: Delete stale orders-only rows for this date/marketplace
+    # Orders that were Cancelled since last pull will disappear from the report.
+    # Without this cleanup, stale rows inflate units_ordered.
+    fresh_asins = set(row["child_asin"] for row in filtered_rows)
+    existing_orders = client.table("sp_daily_asin_data") \
+        .select("child_asin") \
+        .eq("marketplace_id", marketplace_id) \
+        .eq("date", report_date.isoformat()) \
+        .eq("data_source", "orders") \
+        .execute()
+
+    stale_asins = [r["child_asin"] for r in (existing_orders.data or [])
+                   if r["child_asin"] not in fresh_asins]
+
+    if stale_asins:
+        # Delete in batches (Supabase .in_ has limits)
+        for i in range(0, len(stale_asins), 100):
+            batch = stale_asins[i:i + 100]
+            client.table("sp_daily_asin_data") \
+                .delete() \
+                .eq("marketplace_id", marketplace_id) \
+                .eq("date", report_date.isoformat()) \
+                .eq("data_source", "orders") \
+                .in_("child_asin", batch) \
+                .execute()
+        print(f"  🗑️  Removed {len(stale_asins)} stale orders rows (likely Cancelled)")
+
+    # Step 4: Upsert in chunks
     if not filtered_rows:
         return 0
 
