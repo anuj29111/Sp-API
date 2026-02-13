@@ -68,11 +68,19 @@ Pull tracking: `sp_api_pulls`, `sp_inventory_pulls`, `sp_sqp_pulls`, `sp_financi
 - **SQP/SCP**: Running 4x/day until 2-year backfill complete
 
 ### Pending Work
-- **Google Sheets SPCOL/SPDATA**: Code BUILT & pushed. Next: user copies script, runs "Setup DB Helper", replaces formulas with `=SPCOL(...)`, tests vs GorillaROI data. See `Documentation/google-sheets.md`
+- **Google Sheets formulas**: Script has dump sheet refresh functions (working) + `generateFormulas()` (not useful — sheet layout is too complex). Next session: discuss per-cell native INDIRECT formula patterns the user can drag/copy manually. MUST read actual sheet layout from `Business Excel/Business Amazon -2025.xlsx` first. See lessons learned below.
 - Monthly TST pull (`--period-type MONTH`)
 - Phase 4: Product master + COGS
 - Phase 5: CM1/CM2 calculation views
 - Phase 6: Web dashboard
+
+## Google Sheets Lessons Learned (CRITICAL — read before touching formulas)
+
+- **Custom functions (SPCOL/SPDATA) DO NOT WORK** — Google Sheets has a 30-second execution limit for custom functions. SP Data dump sheet has 36K+ rows. Reading it into Apps Script memory alone exceeds the limit. **NEVER build custom functions that read large dump sheets.**
+- **Native formulas (SUMIFS/INDEX-MATCH) are instant** — no execution limit, handled by Google Sheets engine natively. Always use native formulas.
+- **The actual sheet layout is complex** — 546 columns, weekly/monthly interspersed, gaps, merged cells, many sections (ad spend, TACOS, CPC, etc.) beyond SP-API data. Do NOT assume a clean grid. Read `Business Excel/Business Amazon -2025.xlsx` to understand the real layout before proposing solutions.
+- **User builds formulas manually** — provide the formula LOGIC and column mappings. Do NOT build auto-generators that assume sheet structure. The user knows the sheet layout and can place formulas.
+- **The working formula pattern** uses `INDIRECT("'SP Data "&$B$2&"'!$D:$D")` to dynamically reference dump sheets from the country code in B2. This is the only dynamic part needed.
 
 ## Reference Docs (read on-demand, NOT every session)
 

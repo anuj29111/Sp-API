@@ -1077,7 +1077,6 @@ function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('Supabase Data')
     .addItem('Refresh One Country...', 'refreshOneCountry')
-    .addItem('Generate Formulas', 'generateFormulas')
     .addItem('Duplicate Country Tab...', 'duplicateCountryTab')
     .addSeparator()
     .addSubMenu(ui.createMenu('Setup')
@@ -1112,162 +1111,6 @@ function _safeAlert(message) {
   } catch (e) {
     Logger.log(message);
   }
-}
-
-
-// ============================================
-// GENERATE FORMULAS — AUTO-FILL NATIVE FORMULAS
-// ============================================
-// Reads row 3 (section names) and row 4 (dates) of the active country tab,
-// looks up each section in DB Helper, and writes the correct native
-// BYROW + SUMIFS / INDEX-MATCH formula into row 5 of each column.
-//
-// Native formulas are INSTANT (no 30-second limit) and scale to any data size.
-//
-// Usage: Menu > Supabase Data > Generate Formulas
-// Prerequisites: B2 = country code, D2 = ASIN range (e.g. C5:C270),
-//                Row 3 = section names, Row 4 = dates, DB Helper sheet exists.
-
-/**
- * Converts a 0-indexed column number to a column letter.
- * 0→A, 1→B, 2→C, ... 25→Z, 26→AA
- */
-function _colLetter(colIndex) {
-  var letter = '';
-  var n = colIndex;
-  while (n >= 0) {
-    letter = String.fromCharCode((n % 26) + 65) + letter;
-    n = Math.floor(n / 26) - 1;
-  }
-  return letter;
-}
-
-/**
- * Builds an INDIRECT reference like: INDIRECT("'"&"SP Data "&$B$2&"'!$D:$D")
- * This dynamically resolves to e.g. 'SP Data US'!$D:$D based on the country in B2.
- */
-function _indRef(sheetPrefix, colIndex) {
-  var colL = _colLetter(colIndex);
-  return 'INDIRECT("\'"&"' + sheetPrefix + ' "&$B$2&"\'!$' + colL + ':$' + colL + '")';
-}
-
-/**
- * Auto-generates native formulas for the active country tab.
- *
- * Scans row 3 for section names (starting at column E / index 4).
- * For each section found in DB Helper, writes a BYROW formula into row 5.
- *
- * Formula types generated:
- *   sumifs_date (with data_type): BYROW + SUMIFS with date + data_type filter
- *   sumifs_date (no data_type):   BYROW + SUMIFS with date only
- *   sumifs:                       BYROW + SUMIFS (no date, e.g. inventory)
- *   match:                        BYROW + INDEX/MATCH (returns number)
- *   match_text:                   BYROW + INDEX/MATCH (returns text)
- */
-function generateFormulas() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getActiveSheet();
-  var ui = SpreadsheetApp.getUi();
-
-  // Validate setup
-  var country = String(sheet.getRange('B2').getValue()).trim();
-  var asinRange = String(sheet.getRange('D2').getValue()).trim();
-  if (!country) { ui.alert('B2 must contain the country code (e.g., US)'); return; }
-  if (!asinRange) { ui.alert('D2 must contain the ASIN range (e.g., C5:C270)'); return; }
-
-  // Read DB Helper
-  var helper = ss.getSheetByName('DB Helper');
-  if (!helper) { ui.alert('DB Helper sheet not found! Run Setup DB Helper first.'); return; }
-
-  var helperData = helper.getDataRange().getValues();
-  var mappings = {};
-  for (var h = 1; h < helperData.length; h++) {
-    var row = helperData[h];
-    var name = String(row[0]).trim();
-    if (!name) continue;
-    mappings[name] = {
-      sheetPrefix: String(row[1]).trim(),
-      valueCol:    parseInt(row[2], 10),
-      asinCol:     parseInt(row[3], 10),
-      dateCol:     parseInt(row[4], 10) || 0,
-      dataTypeCol: parseInt(row[5], 10) || 0,
-      dataType:    String(row[6] || '').trim(),
-      lookupType:  String(row[7]).trim()
-    };
-  }
-
-  // Scan row 3 for section names (start at col E = index 4, go to last column)
-  var lastCol = sheet.getLastColumn();
-  if (lastCol < 5) { ui.alert('No section names found in row 3 (starting column E)'); return; }
-
-  var row3 = sheet.getRange(3, 5, 1, lastCol - 4).getValues()[0]; // E3 onwards
-  var generated = 0;
-  var skipped = [];
-
-  for (var c = 0; c < row3.length; c++) {
-    var sectionName = String(row3[c]).trim();
-    if (!sectionName) continue;
-
-    var m = mappings[sectionName];
-    if (!m) {
-      skipped.push(sectionName);
-      continue;
-    }
-
-    var colAddr = _colLetter(c + 4); // c=0 is column E (index 4)
-    var dateRef = colAddr + '$4';     // e.g. G$4
-    var formula = '';
-
-    if (m.lookupType === 'sumifs_date' && m.dataType) {
-      // SUMIFS with date + data_type filter (SP Data monthly/weekly)
-      formula = '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",IFERROR(SUMIFS(' +
-        _indRef(m.sheetPrefix, m.valueCol) + ',' +
-        _indRef(m.sheetPrefix, m.dataTypeCol) + ',"' + m.dataType + '",' +
-        _indRef(m.sheetPrefix, m.asinCol) + ',asin,' +
-        _indRef(m.sheetPrefix, m.dateCol) + ',TEXT(' + dateRef + ',"yyyy-mm-dd")' +
-        '),0))))';
-    }
-    else if (m.lookupType === 'sumifs_date') {
-      // SUMIFS with date only (SP Daily)
-      formula = '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",IFERROR(SUMIFS(' +
-        _indRef(m.sheetPrefix, m.valueCol) + ',' +
-        _indRef(m.sheetPrefix, m.asinCol) + ',asin,' +
-        _indRef(m.sheetPrefix, m.dateCol) + ',TEXT(' + dateRef + ',"yyyy-mm-dd")' +
-        '),0))))';
-    }
-    else if (m.lookupType === 'sumifs') {
-      // SUMIFS no date (inventory — multi-SKU sum)
-      formula = '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",IFERROR(SUMIFS(' +
-        _indRef(m.sheetPrefix, m.valueCol) + ',' +
-        _indRef(m.sheetPrefix, m.asinCol) + ',asin' +
-        '),0))))';
-    }
-    else if (m.lookupType === 'match') {
-      // INDEX/MATCH returning number
-      formula = '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",IFERROR(INDEX(' +
-        _indRef(m.sheetPrefix, m.valueCol) + ',' +
-        'MATCH(asin,' + _indRef(m.sheetPrefix, m.asinCol) + ',0)' +
-        '),0))))';
-    }
-    else if (m.lookupType === 'match_text') {
-      // INDEX/MATCH returning text
-      formula = '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",IFERROR(INDEX(' +
-        _indRef(m.sheetPrefix, m.valueCol) + ',' +
-        'MATCH(asin,' + _indRef(m.sheetPrefix, m.asinCol) + ',0)' +
-        '),""))))';
-    }
-
-    if (formula) {
-      sheet.getRange(5, c + 5).setFormula(formula); // Row 5, column E+c
-      generated++;
-    }
-  }
-
-  var msg = 'Formulas generated: ' + generated;
-  if (skipped.length > 0) {
-    msg += '\n\nSkipped (not in DB Helper): ' + skipped.join(', ');
-  }
-  ui.alert(msg);
 }
 
 
@@ -1401,9 +1244,8 @@ function setupDBHelper() {
   }
 
   _safeAlert('DB Helper created with ' + rows.length + ' section mappings.\n\n' +
-    'Next step: Go to your country tab and run:\n' +
-    'Menu > Supabase Data > Generate Formulas\n\n' +
-    'This will auto-fill native SUMIFS/INDEX-MATCH formulas into row 5.');
+    'Use native SUMIFS/INDEX-MATCH formulas with INDIRECT to reference dump sheets.\n' +
+    'Menu > Debug > Show Formula Examples for patterns.');
 }
 
 
@@ -1416,32 +1258,25 @@ function showFormulaExamples() {
     'FORMULA REFERENCE — NATIVE FORMULAS\n' +
     '====================================\n\n' +
 
-    'SETUP (one-time per country tab):\n' +
-    '  1. Menu > Supabase Data > Setup DB Helper\n' +
-    '  2. Country tab: B2=country code, D2=ASIN range (e.g., C5:C270)\n' +
-    '  3. Row 3 = section names, Row 4 = dates\n' +
-    '  4. Menu > Supabase Data > Generate Formulas\n\n' +
+    'All formulas use INDIRECT to dynamically reference dump sheets from B2 (country code).\n' +
+    'Change B2 to switch countries — all formulas auto-update.\n\n' +
 
-    'Generate Formulas reads row 3, looks up each section\n' +
-    'in DB Helper, and writes native BYROW+SUMIFS or\n' +
-    'INDEX-MATCH formulas into row 5. These are instant\n' +
-    '(no Apps Script, no loading time).\n\n' +
+    '=== MONTHLY/WEEKLY SALES (SP Data) ===\n' +
+    '=IFERROR(SUMIFS(INDIRECT("\'SP Data "&$B$2&"\'!$D:$D"),INDIRECT("\'SP Data "&$B$2&"\'!$A:$A"),"monthly",INDIRECT("\'SP Data "&$B$2&"\'!$B:$B"),$C5,INDIRECT("\'SP Data "&$B$2&"\'!$C:$C"),TEXT(F$4,"yyyy-mm-dd")),0)\n\n' +
+    'SP Data cols: A=data_type, B=asin, C=period, D=units, E=units_b2b, F=revenue, G=revenue_b2b, H=sessions, I=page_views, J=buy_box%, K=conversion%\n\n' +
 
-    '=== SECTION NAMES (Row 3) ===\n' +
-    'Monthly: Monthly Sales, Monthly Revenue, Monthly Sessions...\n' +
-    'Weekly:  Weekly Sales, Weekly Revenue, Weekly Sessions...\n' +
-    'Daily:   Daily Sales, Daily Revenue, Daily Sessions...\n' +
-    'Rolling: Rolling 7d Units, Rolling 30d Revenue...\n' +
-    'Stock:   FBA Fulfillable, FBA Total, AWD On-hand...\n' +
-    'Fees:    Est Fee Total, Storage Fee, Settle Avg FBA Fee...\n' +
-    'Text:    Product Name, Size Tier\n\n' +
+    '=== DAILY SALES (SP Daily) ===\n' +
+    '=IFERROR(SUMIFS(INDIRECT("\'SP Daily "&$B$2&"\'!$C:$C"),INDIRECT("\'SP Daily "&$B$2&"\'!$A:$A"),$C5,INDIRECT("\'SP Daily "&$B$2&"\'!$B:$B"),TEXT(F$4,"yyyy-mm-dd")),0)\n\n' +
+    'SP Daily cols: A=asin, B=date, C=units, D=units_b2b, E=revenue, F=revenue_b2b, G=sessions, H=page_views, I=buy_box%, J=conversion%\n\n' +
 
-    'Full list: see DB Helper sheet.\n\n' +
+    '=== INVENTORY (SP Inventory — SUMIFS, no date) ===\n' +
+    '=IFERROR(SUMIFS(INDIRECT("\'SP Inventory "&$B$2&"\'!$D:$D"),INDIRECT("\'SP Inventory "&$B$2&"\'!$A:$A"),$C5),0)\n\n' +
+    'SP Inventory cols: A=asin, B=sku, C=name, D=fba_fulfillable, E=fba_local, F=fba_remote, G=reserved, H-J=inbound, K=unsellable, L=fba_total, M=awd_onhand, N=awd_inbound, O=awd_available, P=awd_total\n\n' +
 
-    '=== TO ADD A COUNTRY ===\n' +
-    '1. Menu > Refresh One Country (creates dump sheets)\n' +
-    '2. Menu > Duplicate Country Tab (copies formulas)\n' +
-    '   All formulas auto-adjust — B2 drives INDIRECT refs.';
+    '=== ROLLING / FEES (INDEX-MATCH, one row per ASIN) ===\n' +
+    '=IFERROR(INDEX(INDIRECT("\'SP Rolling "&$B$2&"\'!$D:$D"),MATCH($C5,INDIRECT("\'SP Rolling "&$B$2&"\'!$A:$A"),0)),0)\n\n' +
+    'SP Rolling cols: A=asin, B=parent, C=currency, D=units_7d, E=rev_7d, F=avg_7d, G=sess_7d, H=conv_7d, I-M=14d, N-R=30d, S-W=60d\n' +
+    'SP Fees cols: A=asin, B=sku, C=size_tier, D=price, E=est_total, F=est_referral, G=est_fba, H=settle_fba, I=settle_referral, J=settle_qty, K=storage_fee, L=storage_qty';
 
   SpreadsheetApp.getUi().alert(examples);
 }
