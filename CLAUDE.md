@@ -68,7 +68,9 @@ Pull tracking: `sp_api_pulls`, `sp_inventory_pulls`, `sp_sqp_pulls`, `sp_financi
 - **SQP/SCP**: Running 4x/day until 2-year backfill complete
 
 ### Pending Work
-- **Google Sheets formulas**: Script has dump sheet refresh functions (working) + `generateFormulas()` (not useful — sheet layout is too complex). Next session: discuss per-cell native INDIRECT formula patterns the user can drag/copy manually. MUST read actual sheet layout from `Business Excel/Business Amazon -2025.xlsx` first. See lessons learned below.
+- **Google Sheets**: Add browser_sessions, mobile_app_sessions, browser_page_views, mobile_app_page_views to materialized views + dump sheets + DB Helper
+- **Google Sheets**: Expand USA Daily tab to remaining sections (ad spend, TACOS, CPC, etc. beyond column DI)
+- **Google Sheets**: Duplicate USA Daily tab to other countries
 - Monthly TST pull (`--period-type MONTH`)
 - Phase 4: Product master + COGS
 - Phase 5: CM1/CM2 calculation views
@@ -76,11 +78,12 @@ Pull tracking: `sp_api_pulls`, `sp_inventory_pulls`, `sp_sqp_pulls`, `sp_financi
 
 ## Google Sheets Lessons Learned (CRITICAL — read before touching formulas)
 
-- **Custom functions (SPCOL/SPDATA) DO NOT WORK** — Google Sheets has a 30-second execution limit for custom functions. SP Data dump sheet has 36K+ rows. Reading it into Apps Script memory alone exceeds the limit. **NEVER build custom functions that read large dump sheets.**
-- **Native formulas (SUMIFS/INDEX-MATCH) are instant** — no execution limit, handled by Google Sheets engine natively. Always use native formulas.
-- **The actual sheet layout is complex** — 546 columns, weekly/monthly interspersed, gaps, merged cells, many sections (ad spend, TACOS, CPC, etc.) beyond SP-API data. Do NOT assume a clean grid. Read `Business Excel/Business Amazon -2025.xlsx` to understand the real layout before proposing solutions.
-- **User builds formulas manually** — provide the formula LOGIC and column mappings. Do NOT build auto-generators that assume sheet structure. The user knows the sheet layout and can place formulas.
-- **The working formula pattern** uses `INDIRECT("'SP Data "&$B$2&"'!$D:$D")` to dynamically reference dump sheets from the country code in B2. This is the only dynamic part needed.
+- **Custom functions (SPCOL/SPDATA) DO NOT WORK** — 30-sec execution limit, dump sheets too large. NEVER build custom functions.
+- **Native BYROW+SUMIFS with INDIRECT are instant** — no execution limit. Always use native formulas.
+- **DB Helper drives everything** — row 3 section name → VLOOKUP DB Helper → INDIRECT builds dump sheet ref → SUMIFS/INDEX-MATCH. 4 formula types: A (monthly/weekly), B (daily), C (inventory), D (rolling/fees).
+- **Weekly dates are MONDAY** — not Sunday. Use `WEEKDAY(date,2)` for Monday anchor formulas.
+- **Conversion/Buy Box already in %** — 16.67 means 16.67%. Do NOT use % cell format.
+- **DB Helper has built-in reference guide** — columns J-L auto-generated with all formulas, dump sheet columns, date helpers, and notes.
 
 ## Reference Docs (read on-demand, NOT every session)
 
