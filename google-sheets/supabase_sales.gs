@@ -1251,14 +1251,167 @@ function setupDBHelper() {
   sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
   sheet.setFrozenRows(1);
 
-  // Auto-fit columns
+  // Auto-fit columns A-H
   for (var c = 1; c <= headers.length; c++) {
     sheet.autoResizeColumn(c);
   }
 
+  // ============================================
+  // REFERENCE SECTION (columns J onward)
+  // ============================================
+  var refCol = 10; // Column J
+  var refData = [
+    // --- FORMULA TEMPLATES ---
+    ['FORMULA TEMPLATES', '', ''],
+    ['', '', ''],
+    ['Type', 'When to Use', 'Formula (change G to your column)'],
+    ['A: Monthly/Weekly', 'Row 3 = Monthly Sales, Weekly Revenue, etc.', '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",LET(s,"\'"&VLOOKUP(G$3,\'DB Helper\'!$A:$B,2,0)&" "&$B$2&"\'!",IFERROR(SUMIFS(INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$C,3,0)),INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$F,6,0)),VLOOKUP(G$3,\'DB Helper\'!$A:$G,7,0),INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$D,4,0)),asin,INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$E,5,0)),TEXT(G$4,"yyyy-mm-dd")),0)))))'],
+    ['B: Daily', 'Row 3 = Daily Sales, Daily Revenue, etc.', '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",LET(s,"\'"&VLOOKUP(G$3,\'DB Helper\'!$A:$B,2,0)&" "&$B$2&"\'!",IFERROR(SUMIFS(INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$C,3,0)),INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$D,4,0)),asin,INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$E,5,0)),TEXT(G$4,"yyyy-mm-dd")),0)))))'],
+    ['C: Inventory', 'Row 3 = FBA Fulfillable, FBA Total, etc.', '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",LET(s,"\'"&VLOOKUP(G$3,\'DB Helper\'!$A:$B,2,0)&" "&$B$2&"\'!",IFERROR(SUMIFS(INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$C,3,0)),INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$D,4,0)),asin),0)))))'],
+    ['D: Rolling/Fees', 'Row 3 = Rolling 7d Units, Price, etc.', '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",LET(s,"\'"&VLOOKUP(G$3,\'DB Helper\'!$A:$B,2,0)&" "&$B$2&"\'!",IFERROR(INDEX(INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$C,3,0)),MATCH(asin,INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$D,4,0)),0)),0)))))'],
+    ['', '', ''],
+
+    // --- COUNTRY TAB SETUP ---
+    ['COUNTRY TAB SETUP', '', ''],
+    ['', '', ''],
+    ['Cell', 'Purpose', 'Example'],
+    ['B2', 'Country code', 'US'],
+    ['D2', 'ASIN range (text)', 'C5:C270'],
+    ['Row 3', 'Section name (must match col A exactly)', 'Monthly Sales'],
+    ['Row 4', 'Date (real Date value, for date sections)', '2026-01-01'],
+    ['Row 5+', 'Paste formula in row 5, BYROW fills down', ''],
+    ['', '', ''],
+
+    // --- DUMP SHEET COLUMNS ---
+    ['DUMP SHEET COLUMNS', '', ''],
+    ['', '', ''],
+    ['SP Data (monthly/weekly)', 'Col', 'Header'],
+    ['', 'A', 'data_type (monthly/weekly)'],
+    ['', 'B', 'child_asin'],
+    ['', 'C', 'period (yyyy-mm-dd)'],
+    ['', 'D', 'units_ordered'],
+    ['', 'E', 'units_ordered_b2b'],
+    ['', 'F', 'ordered_product_sales'],
+    ['', 'G', 'ordered_product_sales_b2b'],
+    ['', 'H', 'sessions'],
+    ['', 'I', 'page_views'],
+    ['', 'J', 'avg_buy_box_percentage'],
+    ['', 'K', 'avg_conversion_rate'],
+    ['', '', ''],
+    ['SP Daily (last 35 days)', 'Col', 'Header'],
+    ['', 'A', 'child_asin'],
+    ['', 'B', 'date (yyyy-mm-dd)'],
+    ['', 'C', 'units_ordered'],
+    ['', 'D', 'units_ordered_b2b'],
+    ['', 'E', 'ordered_product_sales'],
+    ['', 'F', 'ordered_product_sales_b2b'],
+    ['', 'G', 'sessions'],
+    ['', 'H', 'page_views'],
+    ['', 'I', 'buy_box_percentage'],
+    ['', 'J', 'unit_session_percentage'],
+    ['', '', ''],
+    ['SP Rolling (one row/ASIN)', 'Col', 'Header'],
+    ['', 'A', 'child_asin'],
+    ['', 'B', 'parent_asin'],
+    ['', 'C', 'currency'],
+    ['', 'D-H', '7d: units, revenue, avg_units, sessions, conversion'],
+    ['', 'I-M', '14d: units, revenue, avg_units, sessions, conversion'],
+    ['', 'N-R', '30d: units, revenue, avg_units, sessions, conversion'],
+    ['', 'S-W', '60d: units, revenue, avg_units, sessions, conversion'],
+    ['', '', ''],
+    ['SP Inventory (latest snapshot)', 'Col', 'Header'],
+    ['', 'A', 'asin'],
+    ['', 'B', 'sku'],
+    ['', 'C', 'product_name'],
+    ['', 'D', 'fba_fulfillable'],
+    ['', 'E', 'fba_local (EU EFN)'],
+    ['', 'F', 'fba_remote (EU EFN)'],
+    ['', 'G', 'fba_reserved'],
+    ['', 'H', 'fba_inbound_working'],
+    ['', 'I', 'fba_inbound_shipped'],
+    ['', 'J', 'fba_inbound_receiving'],
+    ['', 'K', 'fba_unsellable'],
+    ['', 'L', 'fba_total'],
+    ['', 'M', 'awd_onhand (NA only)'],
+    ['', 'N', 'awd_inbound'],
+    ['', 'O', 'awd_available'],
+    ['', 'P', 'awd_total'],
+    ['', '', ''],
+    ['SP Fees (latest estimates)', 'Col', 'Header'],
+    ['', 'A', 'asin'],
+    ['', 'B', 'sku'],
+    ['', 'C', 'product_size_tier'],
+    ['', 'D', 'your_price'],
+    ['', 'E', 'est_fee_total'],
+    ['', 'F', 'est_referral_per_unit'],
+    ['', 'G', 'est_fba_per_unit'],
+    ['', 'H', 'settle_avg_fba_per_unit'],
+    ['', 'I', 'settle_avg_referral_per_unit'],
+    ['', 'J', 'settle_fba_qty_basis'],
+    ['', 'K', 'storage_fee_latest_month'],
+    ['', 'L', 'storage_avg_qty_on_hand'],
+    ['', '', ''],
+
+    // --- ACCOUNT-LEVEL ROLLING CONVERSION ---
+    ['ACCOUNT-LEVEL CONVERSION', '', ''],
+    ['', '', ''],
+    ['Period', 'Units Col', 'Formula'],
+    ['7d', 'D / G', '=IFERROR(SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$D:$D"))/SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$G:$G"))*100,0)'],
+    ['14d', 'I / L', '=IFERROR(SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$I:$I"))/SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$L:$L"))*100,0)'],
+    ['30d', 'N / Q', '=IFERROR(SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$N:$N"))/SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$Q:$Q"))*100,0)'],
+    ['60d', 'S / V', '=IFERROR(SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$S:$S"))/SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$V:$V"))*100,0)'],
+    ['', '', ''],
+
+    // --- DATE FORMULAS ---
+    ['DATE FORMULAS', '', ''],
+    ['', '', ''],
+    ['Purpose', '', 'Formula'],
+    ['Current month 1st', '', '=DATE(YEAR(TODAY()),MONTH(TODAY()),1)'],
+    ['Previous year same month', '', '=DATE(YEAR(TODAY())-1,MONTH(TODAY()),1)'],
+    ['Monday anchor (this month)', '', '=DATE(YEAR(TODAY()),MONTH(TODAY()),1)-WEEKDAY(DATE(YEAR(TODAY()),MONTH(TODAY()),1),2)+1'],
+    ['Monday anchor (last year)', '', '=DATE(YEAR(TODAY())-1,MONTH(TODAY()),1)-WEEKDAY(DATE(YEAR(TODAY())-1,MONTH(TODAY()),1),2)+1'],
+    ['Monday 4wk before anchor', '', '=anchor_cell-28'],
+    ['Next week from any Monday', '', '=previous_cell+7'],
+    ['', '', ''],
+
+    // --- WEEKLY DATE NOTE ---
+    ['IMPORTANT NOTES', '', ''],
+    ['', '', ''],
+    ['Note', '', 'Detail'],
+    ['Weekly dates', '', 'Weeks start MONDAY (not Sunday). Match week_start dates from SP Data dump sheet.'],
+    ['Monthly dates', '', 'Use 1st of month (e.g., 2026-01-01). TEXT(date,"yyyy-mm-dd") must match period in dump sheet.'],
+    ['Conversion %', '', 'Already in % form (e.g., 16.67 = 16.67%). Do NOT use % cell format (would show 1667%).'],
+    ['Buy Box %', '', 'Already in % form (e.g., 100 = 100%).'],
+    ['Multi-SKU ASINs', '', 'Use SUMIFS (Formula C) for inventory — sums across all SKUs for the ASIN.'],
+    ['Not yet in dump sheets', '', 'browser_sessions, mobile_app_sessions, browser_page_views, mobile_app_page_views, sessions_b2b'],
+  ];
+
+  // Write reference section
+  sheet.getRange(1, refCol, refData.length, 3).setValues(refData);
+
+  // Bold the section headers
+  for (var r = 0; r < refData.length; r++) {
+    if (refData[r][0] && refData[r][1] === '' && refData[r][2] === '' && refData[r][0] === refData[r][0].toUpperCase()) {
+      sheet.getRange(r + 1, refCol, 1, 3).setFontWeight('bold').setBackground('#d9ead3');
+    }
+    // Bold sub-headers (Type/Cell/Col rows)
+    if (refData[r][0] === 'Type' || refData[r][0] === 'Cell' || refData[r][0] === 'Period' || refData[r][0] === 'Purpose' || refData[r][0] === 'Note') {
+      sheet.getRange(r + 1, refCol, 1, 3).setFontWeight('bold');
+    }
+    // Also bold dump sheet name rows
+    if (refData[r][0] && refData[r][0].indexOf('SP ') === 0) {
+      sheet.getRange(r + 1, refCol, 1, 3).setFontWeight('bold').setFontStyle('italic');
+    }
+  }
+
+  // Auto-fit reference columns
+  for (var rc = refCol; rc <= refCol + 2; rc++) {
+    sheet.autoResizeColumn(rc);
+  }
+
   _safeAlert('DB Helper created with ' + rows.length + ' section mappings.\n\n' +
-    'Use native SUMIFS/INDEX-MATCH formulas with INDIRECT to reference dump sheets.\n' +
-    'Menu > Debug > Show Formula Examples for patterns.');
+    'Reference guide added in columns J-L.\n' +
+    'Includes: formula templates, dump sheet columns, date formulas, and notes.');
 }
 
 
