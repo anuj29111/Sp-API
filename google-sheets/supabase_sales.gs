@@ -226,11 +226,21 @@ function getWeeklyDataFromView(marketplaceId, config, sinceDate) {
   return fetchAllFromSupabase(url, config);
 }
 
-/** Rolling 7/14/30/60-day metrics */
+/** Rolling 7/14/30/60/90-day metrics */
 function getRollingMetrics(marketplaceId, config) {
   var url = config.url + '/rest/v1/sp_rolling_asin_metrics?' +
     'marketplace_id=eq.' + marketplaceId +
-    '&select=child_asin,parent_asin,currency_code,units_last_7_days,revenue_last_7_days,avg_units_7_days,sessions_last_7_days,avg_conversion_7_days,units_last_14_days,revenue_last_14_days,avg_units_14_days,sessions_last_14_days,avg_conversion_14_days,units_last_30_days,revenue_last_30_days,avg_units_30_days,sessions_last_30_days,avg_conversion_30_days,units_last_60_days,revenue_last_60_days,avg_units_60_days,sessions_last_60_days,avg_conversion_60_days' +
+    '&select=child_asin,parent_asin,currency_code,' +
+    'units_last_7_days,revenue_last_7_days,avg_units_7_days,sessions_last_7_days,avg_conversion_7_days,' +
+    'units_last_14_days,revenue_last_14_days,avg_units_14_days,sessions_last_14_days,avg_conversion_14_days,' +
+    'units_last_30_days,revenue_last_30_days,avg_units_30_days,sessions_last_30_days,avg_conversion_30_days,' +
+    'units_last_60_days,revenue_last_60_days,avg_units_60_days,sessions_last_60_days,avg_conversion_60_days,' +
+    'browser_sessions_last_7_days,mobile_app_sessions_last_7_days,browser_page_views_last_7_days,mobile_app_page_views_last_7_days,' +
+    'browser_sessions_last_14_days,mobile_app_sessions_last_14_days,browser_page_views_last_14_days,mobile_app_page_views_last_14_days,' +
+    'browser_sessions_last_30_days,mobile_app_sessions_last_30_days,browser_page_views_last_30_days,mobile_app_page_views_last_30_days,' +
+    'browser_sessions_last_60_days,mobile_app_sessions_last_60_days,browser_page_views_last_60_days,mobile_app_page_views_last_60_days,' +
+    'units_last_90_days,revenue_last_90_days,avg_units_90_days,sessions_last_90_days,avg_conversion_90_days,' +
+    'browser_sessions_last_90_days,mobile_app_sessions_last_90_days,browser_page_views_last_90_days,mobile_app_page_views_last_90_days' +
     '&order=child_asin.asc';
 
   return fetchAllFromSupabase(url, config);
@@ -541,11 +551,20 @@ function refreshRollingData(country, configKey) {
     var data = getRollingMetrics(marketplaceId, config);
 
     var headers = [
+      // A-W: Original columns (DO NOT REORDER — existing formulas depend on these positions)
       'child_asin', 'parent_asin', 'currency',
       'units_7d', 'revenue_7d', 'avg_units_7d', 'sessions_7d', 'conversion_7d',
       'units_14d', 'revenue_14d', 'avg_units_14d', 'sessions_14d', 'conversion_14d',
       'units_30d', 'revenue_30d', 'avg_units_30d', 'sessions_30d', 'conversion_30d',
-      'units_60d', 'revenue_60d', 'avg_units_60d', 'sessions_60d', 'conversion_60d'
+      'units_60d', 'revenue_60d', 'avg_units_60d', 'sessions_60d', 'conversion_60d',
+      // X onward: New session breakdown columns (appended, never reorder above)
+      'browser_sessions_7d', 'mobile_app_sessions_7d', 'browser_page_views_7d', 'mobile_app_page_views_7d',
+      'browser_sessions_14d', 'mobile_app_sessions_14d', 'browser_page_views_14d', 'mobile_app_page_views_14d',
+      'browser_sessions_30d', 'mobile_app_sessions_30d', 'browser_page_views_30d', 'mobile_app_page_views_30d',
+      'browser_sessions_60d', 'mobile_app_sessions_60d', 'browser_page_views_60d', 'mobile_app_page_views_60d',
+      // 90-day window
+      'units_90d', 'revenue_90d', 'avg_units_90d', 'sessions_90d', 'conversion_90d',
+      'browser_sessions_90d', 'mobile_app_sessions_90d', 'browser_page_views_90d', 'mobile_app_page_views_90d'
     ];
 
     var sheet = getOrCreateDumpSheet('SP Rolling', country, headers);
@@ -557,6 +576,7 @@ function refreshRollingData(country, configKey) {
     for (var i = 0; i < data.length; i++) {
       var r = data[i];
       output.push([
+        // A-W: Original columns (same order as before)
         r.child_asin || '', r.parent_asin || '', r.currency_code || '',
         r.units_last_7_days || 0, parseFloat(r.revenue_last_7_days) || 0,
         parseFloat(r.avg_units_7_days) || 0, r.sessions_last_7_days || 0, parseFloat(r.avg_conversion_7_days) || 0,
@@ -565,7 +585,21 @@ function refreshRollingData(country, configKey) {
         r.units_last_30_days || 0, parseFloat(r.revenue_last_30_days) || 0,
         parseFloat(r.avg_units_30_days) || 0, r.sessions_last_30_days || 0, parseFloat(r.avg_conversion_30_days) || 0,
         r.units_last_60_days || 0, parseFloat(r.revenue_last_60_days) || 0,
-        parseFloat(r.avg_units_60_days) || 0, r.sessions_last_60_days || 0, parseFloat(r.avg_conversion_60_days) || 0
+        parseFloat(r.avg_units_60_days) || 0, r.sessions_last_60_days || 0, parseFloat(r.avg_conversion_60_days) || 0,
+        // X onward: New session breakdown columns
+        r.browser_sessions_last_7_days || 0, r.mobile_app_sessions_last_7_days || 0,
+        r.browser_page_views_last_7_days || 0, r.mobile_app_page_views_last_7_days || 0,
+        r.browser_sessions_last_14_days || 0, r.mobile_app_sessions_last_14_days || 0,
+        r.browser_page_views_last_14_days || 0, r.mobile_app_page_views_last_14_days || 0,
+        r.browser_sessions_last_30_days || 0, r.mobile_app_sessions_last_30_days || 0,
+        r.browser_page_views_last_30_days || 0, r.mobile_app_page_views_last_30_days || 0,
+        r.browser_sessions_last_60_days || 0, r.mobile_app_sessions_last_60_days || 0,
+        r.browser_page_views_last_60_days || 0, r.mobile_app_page_views_last_60_days || 0,
+        // 90-day window
+        r.units_last_90_days || 0, parseFloat(r.revenue_last_90_days) || 0,
+        parseFloat(r.avg_units_90_days) || 0, r.sessions_last_90_days || 0, parseFloat(r.avg_conversion_90_days) || 0,
+        r.browser_sessions_last_90_days || 0, r.mobile_app_sessions_last_90_days || 0,
+        r.browser_page_views_last_90_days || 0, r.mobile_app_page_views_last_90_days || 0
       ]);
     }
 
@@ -1157,11 +1191,13 @@ function setupDBHelper() {
   // Dump sheet column mappings:
   // SP Data:      A=data_type B=child_asin C=period D=units E=units_b2b F=revenue G=revenue_b2b H=sessions I=page_views J=buy_box% K=conversion%
   // SP Daily:     A=child_asin B=date C=units D=units_b2b E=revenue F=revenue_b2b G=sessions H=page_views I=buy_box% J=conversion%
-  // SP Rolling:   A=child_asin B=parent C=currency D-H=7d I-M=14d N-R=30d S-W=60d
+  // SP Rolling:   A=child_asin B=parent C=currency D-H=7d I-M=14d N-R=30d S-W=60d (original)
+  //               X-AA=browser/mobile 7d, AB-AE=14d, AF-AI=30d, AJ-AM=60d (session breakdown, appended)
+  //               AN-AR=90d core, AS-AV=90d session breakdown (appended)
   // SP Inventory: A=asin B=sku C=product_name D=fba_fulfillable E=fba_local F=fba_remote G=reserved H-J=inbound K=unsellable L=fba_total M-P=awd
   // SP Fees:      A=asin B=sku C=size_tier D=price E=est_total F=est_referral G=est_fba H-J=settlement K=storage_fee L=storage_qty
   var rows = [
-    // === SP Data (monthly) ===
+    // === SP Data (monthly) — LOCKED LAYOUT, DO NOT REORDER ===
     ['Monthly Sales',        'SP Data', '$D:$D', '$B:$B', '$C:$C', '$A:$A', 'monthly', 'sumifs_date'],
     ['Monthly Sales B2B',    'SP Data', '$E:$E', '$B:$B', '$C:$C', '$A:$A', 'monthly', 'sumifs_date'],
     ['Monthly Revenue',      'SP Data', '$F:$F', '$B:$B', '$C:$C', '$A:$A', 'monthly', 'sumifs_date'],
@@ -1171,7 +1207,7 @@ function setupDBHelper() {
     ['Monthly Buy Box %',    'SP Data', '$J:$J', '$B:$B', '$C:$C', '$A:$A', 'monthly', 'sumifs_date'],
     ['Monthly Conversion %', 'SP Data', '$K:$K', '$B:$B', '$C:$C', '$A:$A', 'monthly', 'sumifs_date'],
 
-    // === SP Data (weekly) ===
+    // === SP Data (weekly) — LOCKED LAYOUT, DO NOT REORDER ===
     ['Weekly Sales',        'SP Data', '$D:$D', '$B:$B', '$C:$C', '$A:$A', 'weekly', 'sumifs_date'],
     ['Weekly Sales B2B',    'SP Data', '$E:$E', '$B:$B', '$C:$C', '$A:$A', 'weekly', 'sumifs_date'],
     ['Weekly Revenue',      'SP Data', '$F:$F', '$B:$B', '$C:$C', '$A:$A', 'weekly', 'sumifs_date'],
@@ -1181,7 +1217,7 @@ function setupDBHelper() {
     ['Weekly Buy Box %',    'SP Data', '$J:$J', '$B:$B', '$C:$C', '$A:$A', 'weekly', 'sumifs_date'],
     ['Weekly Conversion %', 'SP Data', '$K:$K', '$B:$B', '$C:$C', '$A:$A', 'weekly', 'sumifs_date'],
 
-    // === SP Daily (no data_type column) ===
+    // === SP Daily — LOCKED LAYOUT, DO NOT REORDER ===
     ['Daily Sales',        'SP Daily', '$C:$C', '$A:$A', '$B:$B', '', '', 'sumifs_date'],
     ['Daily Sales B2B',    'SP Daily', '$D:$D', '$A:$A', '$B:$B', '', '', 'sumifs_date'],
     ['Daily Revenue',      'SP Daily', '$E:$E', '$A:$A', '$B:$B', '', '', 'sumifs_date'],
@@ -1191,7 +1227,7 @@ function setupDBHelper() {
     ['Daily Buy Box %',    'SP Daily', '$I:$I', '$A:$A', '$B:$B', '', '', 'sumifs_date'],
     ['Daily Conversion %', 'SP Daily', '$J:$J', '$A:$A', '$B:$B', '', '', 'sumifs_date'],
 
-    // === SP Rolling (no date — one row per ASIN, INDEX/MATCH) ===
+    // === SP Rolling (original 7/14/30/60d) — LOCKED LAYOUT, DO NOT REORDER ===
     ['Rolling 7d Units',       'SP Rolling', '$D:$D', '$A:$A', '', '', '', 'match'],
     ['Rolling 7d Revenue',     'SP Rolling', '$E:$E', '$A:$A', '', '', '', 'match'],
     ['Rolling 7d Avg Units',   'SP Rolling', '$F:$F', '$A:$A', '', '', '', 'match'],
@@ -1243,6 +1279,42 @@ function setupDBHelper() {
 
     // === Aliases ===
     ['Storage',              'SP Fees', '$K:$K', '$A:$A', '', '', '', 'match'],
+
+    // =============================================================================
+    // NEW SECTIONS (appended — never reorder above, add new sections below only)
+    // =============================================================================
+
+    // === SP Rolling — Session Breakdown (appended after col W) ===
+    // 7d session breakdown: X-AA
+    ['Rolling 7d Browser Sessions',  'SP Rolling', '$X:$X', '$A:$A', '', '', '', 'match'],
+    ['Rolling 7d Mobile Sessions',   'SP Rolling', '$Y:$Y', '$A:$A', '', '', '', 'match'],
+    ['Rolling 7d Browser PV',        'SP Rolling', '$Z:$Z', '$A:$A', '', '', '', 'match'],
+    ['Rolling 7d Mobile PV',         'SP Rolling', '$AA:$AA', '$A:$A', '', '', '', 'match'],
+    // 14d session breakdown: AB-AE
+    ['Rolling 14d Browser Sessions', 'SP Rolling', '$AB:$AB', '$A:$A', '', '', '', 'match'],
+    ['Rolling 14d Mobile Sessions',  'SP Rolling', '$AC:$AC', '$A:$A', '', '', '', 'match'],
+    ['Rolling 14d Browser PV',       'SP Rolling', '$AD:$AD', '$A:$A', '', '', '', 'match'],
+    ['Rolling 14d Mobile PV',        'SP Rolling', '$AE:$AE', '$A:$A', '', '', '', 'match'],
+    // 30d session breakdown: AF-AI
+    ['Rolling 30d Browser Sessions', 'SP Rolling', '$AF:$AF', '$A:$A', '', '', '', 'match'],
+    ['Rolling 30d Mobile Sessions',  'SP Rolling', '$AG:$AG', '$A:$A', '', '', '', 'match'],
+    ['Rolling 30d Browser PV',       'SP Rolling', '$AH:$AH', '$A:$A', '', '', '', 'match'],
+    ['Rolling 30d Mobile PV',        'SP Rolling', '$AI:$AI', '$A:$A', '', '', '', 'match'],
+    // 60d session breakdown: AJ-AM
+    ['Rolling 60d Browser Sessions', 'SP Rolling', '$AJ:$AJ', '$A:$A', '', '', '', 'match'],
+    ['Rolling 60d Mobile Sessions',  'SP Rolling', '$AK:$AK', '$A:$A', '', '', '', 'match'],
+    ['Rolling 60d Browser PV',       'SP Rolling', '$AL:$AL', '$A:$A', '', '', '', 'match'],
+    ['Rolling 60d Mobile PV',        'SP Rolling', '$AM:$AM', '$A:$A', '', '', '', 'match'],
+    // 90d full window: AN-AV
+    ['Rolling 90d Units',            'SP Rolling', '$AN:$AN', '$A:$A', '', '', '', 'match'],
+    ['Rolling 90d Revenue',          'SP Rolling', '$AO:$AO', '$A:$A', '', '', '', 'match'],
+    ['Rolling 90d Avg Units',        'SP Rolling', '$AP:$AP', '$A:$A', '', '', '', 'match'],
+    ['Rolling 90d Sessions',         'SP Rolling', '$AQ:$AQ', '$A:$A', '', '', '', 'match'],
+    ['Rolling 90d Conversion',       'SP Rolling', '$AR:$AR', '$A:$A', '', '', '', 'match'],
+    ['Rolling 90d Browser Sessions', 'SP Rolling', '$AS:$AS', '$A:$A', '', '', '', 'match'],
+    ['Rolling 90d Mobile Sessions',  'SP Rolling', '$AT:$AT', '$A:$A', '', '', '', 'match'],
+    ['Rolling 90d Browser PV',       'SP Rolling', '$AU:$AU', '$A:$A', '', '', '', 'match'],
+    ['Rolling 90d Mobile PV',        'SP Rolling', '$AV:$AV', '$A:$A', '', '', '', 'match'],
   ];
 
   // Write headers + data
@@ -1318,6 +1390,13 @@ function setupDBHelper() {
     ['', 'I-M', '14d: units, revenue, avg_units, sessions, conversion'],
     ['', 'N-R', '30d: units, revenue, avg_units, sessions, conversion'],
     ['', 'S-W', '60d: units, revenue, avg_units, sessions, conversion'],
+    ['', '---', '--- APPENDED COLUMNS (after W) ---'],
+    ['', 'X-AA', '7d: browser_sess, mobile_sess, browser_pv, mobile_pv'],
+    ['', 'AB-AE', '14d: browser_sess, mobile_sess, browser_pv, mobile_pv'],
+    ['', 'AF-AI', '30d: browser_sess, mobile_sess, browser_pv, mobile_pv'],
+    ['', 'AJ-AM', '60d: browser_sess, mobile_sess, browser_pv, mobile_pv'],
+    ['', 'AN-AR', '90d: units, revenue, avg_units, sessions, conversion'],
+    ['', 'AS-AV', '90d: browser_sess, mobile_sess, browser_pv, mobile_pv'],
     ['', '', ''],
     ['SP Inventory (latest snapshot)', 'Col', 'Header'],
     ['', 'A', 'asin'],
@@ -1360,6 +1439,7 @@ function setupDBHelper() {
     ['14d', 'I / L', '=IFERROR(SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$I:$I"))/SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$L:$L"))*100,0)'],
     ['30d', 'N / Q', '=IFERROR(SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$N:$N"))/SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$Q:$Q"))*100,0)'],
     ['60d', 'S / V', '=IFERROR(SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$S:$S"))/SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$V:$V"))*100,0)'],
+    ['90d', 'AN / AQ', '=IFERROR(SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$AN:$AN"))/SUMPRODUCT(INDIRECT("\'SP Rolling "&$B$2&"\'!$AQ:$AQ"))*100,0)'],
     ['', '', ''],
 
     // --- DATE FORMULAS ---
@@ -1383,7 +1463,9 @@ function setupDBHelper() {
     ['Conversion %', '', 'Already in % form (e.g., 16.67 = 16.67%). Do NOT use % cell format (would show 1667%).'],
     ['Buy Box %', '', 'Already in % form (e.g., 100 = 100%).'],
     ['Multi-SKU ASINs', '', 'Use SUMIFS (Formula C) for inventory — sums across all SKUs for the ASIN.'],
-    ['Not yet in dump sheets', '', 'browser_sessions, mobile_app_sessions, browser_page_views, mobile_app_page_views, sessions_b2b'],
+    ['Session breakdown', '', 'browser_sessions + mobile_app_sessions = sessions (total). In SP Rolling only (rolling 7/14/30/60/90d).'],
+    ['Adding new sections', '', 'ALWAYS append new DB Helper rows BELOW existing ones. NEVER insert between or reorder — breaks formulas.'],
+    ['Adding new dump cols', '', 'ALWAYS append new columns AFTER existing ones. NEVER insert between — shifts column letters.'],
   ];
 
   // Write reference section

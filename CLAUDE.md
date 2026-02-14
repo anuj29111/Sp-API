@@ -68,8 +68,8 @@ Pull tracking: `sp_api_pulls`, `sp_inventory_pulls`, `sp_sqp_pulls`, `sp_financi
 - **SQP/SCP**: Running 4x/day until 2-year backfill complete
 
 ### Pending Work
-- **Google Sheets**: Add browser_sessions, mobile_app_sessions, browser_page_views, mobile_app_page_views to materialized views + dump sheets + DB Helper
-- **Google Sheets**: Expand USA Daily tab to remaining sections (ad spend, TACOS, CPC, etc. beyond column DI)
+- **Google Sheets**: Deploy updated script to Google Sheets, run Setup DB Helper + Refresh Rolling
+- **Google Sheets**: Add rolling session breakdown columns to USA Daily tab (Rolling 14d/30d/60d/90d Browser/Mobile Sessions)
 - **Google Sheets**: Duplicate USA Daily tab to other countries
 - Monthly TST pull (`--period-type MONTH`)
 - Phase 4: Product master + COGS
@@ -84,6 +84,8 @@ Pull tracking: `sp_api_pulls`, `sp_inventory_pulls`, `sp_sqp_pulls`, `sp_financi
 - **Weekly dates are MONDAY** — not Sunday. Use `WEEKDAY(date,2)` for Monday anchor formulas.
 - **Conversion/Buy Box already in %** — 16.67 means 16.67%. Do NOT use % cell format.
 - **DB Helper has built-in reference guide** — columns J-L auto-generated with all formulas, dump sheet columns, date helpers, and notes.
+- **NEVER insert columns between existing dump sheet columns** — always APPEND after last column. Inserting shifts column letters and breaks all formulas.
+- **NEVER reorder DB Helper rows** — always APPEND new sections below existing ones. Existing formulas reference these by section name, but column letters in the mappings are positional.
 
 ## Reference Docs (read on-demand, NOT every session)
 
