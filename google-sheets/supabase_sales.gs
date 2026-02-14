@@ -17,7 +17,7 @@
  *
  * SP Data {country}      — Monthly & weekly aggregates (27+ months of history)
  * SP Daily {country}     — Last 35 days of daily per-ASIN data
- * SP Rolling {country}   — Rolling 7/14/30/60-day averages (one row per ASIN)
+ * SP Rolling {country}   — Rolling 7/14/30/60/90-day averages (one row per ASIN)
  * SP Inventory {country} — Latest FBA + AWD inventory snapshot
  * SP Fees {country}      — Fee estimates + settlement actuals + storage fees
  *
@@ -26,8 +26,8 @@
  * Each dump sheet gets its own trigger because Google Apps Script
  * has a 6-minute execution limit per run. One trigger = one dump sheet.
  *
- * Currently set up: USA only (5 triggers).
- * When ready for more countries: add trigger functions + run Setup Triggers.
+ * All 10 countries have trigger functions ready (50 total).
+ * To activate: add marketplace UUID to Script Config, then run Setup Triggers.
  */
 
 
@@ -788,17 +788,71 @@ function refreshFeesData(country, configKey) {
 // ============================================
 // 5 triggers, one per dump sheet.
 // Each runs independently within the 6-min limit.
-//
-// To add another country later:
-//   1. Add its marketplace UUID to Script Config
-//   2. Copy these 5 lines, change "US" to the new country code
-//   3. Run Setup Triggers from menu
+// All 10 countries supported: US, CA, MX, UK, DE, FR, IT, ES, AU, UAE
+// To activate: add marketplace UUID to Script Config, then run Setup Triggers.
 
+// North America
 function trigger_US_sales()     { refreshSPData('US', 'US'); }
 function trigger_US_daily()     { refreshDailyDumpData('US', 'US'); }
 function trigger_US_rolling()   { refreshRollingData('US', 'US'); }
 function trigger_US_inventory() { refreshInventoryData('US', 'US'); }
 function trigger_US_fees()      { refreshFeesData('US', 'US'); }
+
+function trigger_CA_sales()     { refreshSPData('CA', 'CA'); }
+function trigger_CA_daily()     { refreshDailyDumpData('CA', 'CA'); }
+function trigger_CA_rolling()   { refreshRollingData('CA', 'CA'); }
+function trigger_CA_inventory() { refreshInventoryData('CA', 'CA'); }
+function trigger_CA_fees()      { refreshFeesData('CA', 'CA'); }
+
+function trigger_MX_sales()     { refreshSPData('MX', 'MX'); }
+function trigger_MX_daily()     { refreshDailyDumpData('MX', 'MX'); }
+function trigger_MX_rolling()   { refreshRollingData('MX', 'MX'); }
+function trigger_MX_inventory() { refreshInventoryData('MX', 'MX'); }
+function trigger_MX_fees()      { refreshFeesData('MX', 'MX'); }
+
+// Europe
+function trigger_UK_sales()     { refreshSPData('UK', 'UK'); }
+function trigger_UK_daily()     { refreshDailyDumpData('UK', 'UK'); }
+function trigger_UK_rolling()   { refreshRollingData('UK', 'UK'); }
+function trigger_UK_inventory() { refreshInventoryData('UK', 'UK'); }
+function trigger_UK_fees()      { refreshFeesData('UK', 'UK'); }
+
+function trigger_DE_sales()     { refreshSPData('DE', 'DE'); }
+function trigger_DE_daily()     { refreshDailyDumpData('DE', 'DE'); }
+function trigger_DE_rolling()   { refreshRollingData('DE', 'DE'); }
+function trigger_DE_inventory() { refreshInventoryData('DE', 'DE'); }
+function trigger_DE_fees()      { refreshFeesData('DE', 'DE'); }
+
+function trigger_FR_sales()     { refreshSPData('FR', 'FR'); }
+function trigger_FR_daily()     { refreshDailyDumpData('FR', 'FR'); }
+function trigger_FR_rolling()   { refreshRollingData('FR', 'FR'); }
+function trigger_FR_inventory() { refreshInventoryData('FR', 'FR'); }
+function trigger_FR_fees()      { refreshFeesData('FR', 'FR'); }
+
+function trigger_IT_sales()     { refreshSPData('IT', 'IT'); }
+function trigger_IT_daily()     { refreshDailyDumpData('IT', 'IT'); }
+function trigger_IT_rolling()   { refreshRollingData('IT', 'IT'); }
+function trigger_IT_inventory() { refreshInventoryData('IT', 'IT'); }
+function trigger_IT_fees()      { refreshFeesData('IT', 'IT'); }
+
+function trigger_ES_sales()     { refreshSPData('ES', 'ES'); }
+function trigger_ES_daily()     { refreshDailyDumpData('ES', 'ES'); }
+function trigger_ES_rolling()   { refreshRollingData('ES', 'ES'); }
+function trigger_ES_inventory() { refreshInventoryData('ES', 'ES'); }
+function trigger_ES_fees()      { refreshFeesData('ES', 'ES'); }
+
+// Asia-Pacific & Middle East
+function trigger_AU_sales()     { refreshSPData('AU', 'AU'); }
+function trigger_AU_daily()     { refreshDailyDumpData('AU', 'AU'); }
+function trigger_AU_rolling()   { refreshRollingData('AU', 'AU'); }
+function trigger_AU_inventory() { refreshInventoryData('AU', 'AU'); }
+function trigger_AU_fees()      { refreshFeesData('AU', 'AU'); }
+
+function trigger_UAE_sales()     { refreshSPData('UAE', 'UAE'); }
+function trigger_UAE_daily()     { refreshDailyDumpData('UAE', 'UAE'); }
+function trigger_UAE_rolling()   { refreshRollingData('UAE', 'UAE'); }
+function trigger_UAE_inventory() { refreshInventoryData('UAE', 'UAE'); }
+function trigger_UAE_fees()      { refreshFeesData('UAE', 'UAE'); }
 
 
 // ============================================
@@ -808,7 +862,7 @@ function trigger_US_fees()      { refreshFeesData('US', 'US'); }
 /**
  * Creates time-based triggers for all CONFIGURED marketplaces.
  * Only creates triggers for countries that have a marketplace ID in Script Config.
- * Currently USA only = 5 triggers.
+ * All 10 countries supported (US, CA, MX, UK, DE, FR, IT, ES, AU, UAE) = up to 50 triggers.
  *
  * Deletes existing trigger_ functions first to avoid duplicates.
  */
@@ -939,7 +993,7 @@ function refreshOneCountry() {
   var steps = [
     { name: 'Sales (weekly/monthly)', fn: function() { refreshSPData(country, country); } },
     { name: 'Daily (last 35 days)',   fn: function() { refreshDailyDumpData(country, country); } },
-    { name: 'Rolling (7/14/30/60d)',  fn: function() { refreshRollingData(country, country); } },
+    { name: 'Rolling (7/14/30/60/90d)', fn: function() { refreshRollingData(country, country); } },
     { name: 'Inventory (FBA+AWD)',    fn: function() { refreshInventoryData(country, country); } },
     { name: 'Fees (est+settle+stor)', fn: function() { refreshFeesData(country, country); } }
   ];
