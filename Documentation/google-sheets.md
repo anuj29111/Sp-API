@@ -242,25 +242,75 @@ Single cell for debugging:
 | K | 10 | storage_fee_latest_month | Storage fee (latest month) |
 | L | 11 | storage_avg_qty_on_hand | Avg qty on hand for storage |
 
-## 5 USA Triggers
+## Trigger System V2 (Queue + Intra-day)
 
-| Trigger Function | Dump Sheet | What It Does |
-|-----------------|------------|--------------|
-| `trigger_US_sales` | SP Data US | Pulls monthly + weekly aggregates |
-| `trigger_US_daily` | SP Daily US | Pulls last 35 days from deduped view |
-| `trigger_US_rolling` | SP Rolling US | Pulls rolling 7/14/30/60d averages |
-| `trigger_US_inventory` | SP Inventory US | Pulls latest FBA + AWD snapshot |
-| `trigger_US_fees` | SP Fees US | Pulls fee estimates + settlements + storage |
+**11 triggers** supporting 7 countries (US, CA, UK, DE, FR, AU, UAE).
 
-All run once daily at ~6:00 AM. Set up via Menu → Supabase Data → Automation → Setup Triggers.
+### Architecture
 
-## Adding More Countries Later
+| Trigger Type | Count | Purpose |
+|-------------|-------|---------|
+| Morning queue | 1 | `everyMinutes(15)` — processes full-refresh jobs for all 5 sheets × 7 countries |
+| NA intra-day | 7 | US+CA: refreshes today's SP Daily rows ~every 3h, synced to NA orders pull schedule |
+| ROW intra-day | 3 | UK/DE/FR/AU/UAE: refreshes today's SP Daily rows ~every 6h, synced to EU/AU/UAE pulls |
+
+### Morning Queue (full refreshes)
+
+Queue builds automatically at **7 AM UTC** (11 AM Dubai). Processes 1-2 jobs per 15-min invocation.
+35 jobs total: 5 sheets × 7 countries. Completes by ~11:30 AM UTC (3:30 PM Dubai).
+
+Priority order: US first → then other countries. Daily+Sales before Rolling/Inventory/Fees.
+Uses LockService to prevent concurrent runs. Failed jobs retry up to 2x, then skip.
+
+### NA Intra-day Schedule (UTC)
+
+| Trigger | UTC | Dubai GST | After NA pull at |
+|---------|-----|-----------|-----------------|
+| `dispatch_na_intraday_1` | ~3:10 | 7:10 AM | 3 UTC |
+| `dispatch_na_intraday_2` | ~8:10 | 12:10 PM | 8 UTC |
+| `dispatch_na_intraday_3` | ~11:10 | 3:10 PM | 11 UTC |
+| `dispatch_na_intraday_4` | ~14:10 | 6:10 PM | 14 UTC |
+| `dispatch_na_intraday_5` | ~17:10 | 9:10 PM | 17 UTC |
+| `dispatch_na_intraday_6` | ~20:10 | 12:10 AM | 20 UTC |
+| `dispatch_na_intraday_7` | ~23:10 | 3:10 AM | 23 UTC |
+
+### ROW Intra-day Schedule (UTC)
+
+| Trigger | UTC | Dubai GST | Coverage |
+|---------|-----|-----------|----------|
+| `dispatch_row_intraday_1` | ~8:20 | 12:20 PM | EU(8), AU(8), UAE(7/9) |
+| `dispatch_row_intraday_2` | ~14:20 | 6:20 PM | EU(14), AU(13), UAE(13/15) |
+| `dispatch_row_intraday_3` | ~20:20 | 12:20 AM | EU(20), AU(20), UAE(17/22) |
+
+### Smart Daily Today Refresh
+
+`refreshDailyToday()` — fetches only today's rows from Supabase, replaces today's rows in SP Daily.
+~100 rows per country, ~15-30 seconds. Full 35-day refresh runs once daily via morning queue.
+
+### Monitoring
+
+- **Refresh Status sheet** — shows last-updated timestamps for all countries/sheets
+- **Queue Status** — view current queue state (Menu → Automation V2)
+- **Error Log** — last 50 errors with timestamps (Menu → Automation V2)
+
+### Setup
+
+1. Menu → Supabase Data → Automation V2 → **Setup Triggers V2**
+2. Verify: Edit → Current project's triggers → should show 11 `dispatch_*` triggers
+3. Monitor: Menu → Automation V2 → View Refresh Status
+
+## Legacy V1 Triggers (Deprecated)
+
+The old per-country trigger functions (`trigger_US_sales`, etc.) still exist and can be run manually.
+V1 trigger setup is still available at Menu → Setup → Setup Triggers (V1 — legacy).
+
+## Adding More Countries
 
 1. Add marketplace UUID to Script Config sheet
-2. Add trigger functions to the script (copy the 5 US lines, change "US" to new code)
-3. Run Menu → Refresh One Country → enter the country code (creates dump sheets)
-4. Run Menu → Duplicate Country Tab (copies USA tab, replaces all sheet refs)
-5. Run Menu → Setup Triggers (creates triggers for all configured countries)
+2. Run Menu → Refresh One Country → enter the country code (creates dump sheets)
+3. Run Menu → Duplicate Country Tab (copies USA tab, replaces all sheet refs)
+4. V2 triggers are already set up for US, CA, UK, DE, FR, AU, UAE
+5. To add a new country to V2: add to `QUEUE_COUNTRIES` array and dispatch functions in script
 
 ## Setup Steps (First Time)
 
@@ -272,21 +322,10 @@ All run once daily at ~6:00 AM. Set up via Menu → Supabase Data → Automation
    - Set D2 = `C5:C270` (or whatever your ASIN range is)
    - Row 3 = section names (must match DB Helper exactly)
    - Row 4 = date values (real Date objects, cell-formatted for display)
-5. In row 5 of each section column, enter:
-   ```
-   =SPCOL($B$2, G$3, INDIRECT($D$2), G$4)
-   ```
-   (Omit the last parameter for non-date sections like inventory/fees/rolling)
-6. Test values against GorillaROI data
-7. Run Menu → Setup Triggers (creates 5 daily triggers for US)
+5. Use BYROW+LAMBDA formulas from DB Helper reference guide (columns J-L)
+6. Run Menu → Automation V2 → **Setup Triggers V2** (creates 11 triggers)
 
 ## Pending Tasks
 
-1. ~~Copy updated supabase_sales.gs to Apps Script editor~~ → includes SPDATA() + DB Helper
-2. Run "Setup DB Helper" from menu (creates config sheet)
-3. Run "Refresh One Country" for US (populates dump sheets)
-4. Replace GorillaROI formulas with BYROW + SPDATA() formulas
-5. Test formulas against GorillaROI data for validation
-6. Setup 5 triggers for USA
-7. Add sections for POP ad spend data (future — when POP dump sheet added)
-8. Expand to other countries via Duplicate Country Tab
+1. Add sections for POP ad spend data (future — when POP dump sheet added)
+2. Expand country tabs via Duplicate Country Tab for non-USA countries

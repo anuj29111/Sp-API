@@ -68,9 +68,9 @@ Pull tracking: `sp_api_pulls`, `sp_inventory_pulls`, `sp_sqp_pulls`, `sp_financi
 - **SQP/SCP**: Running 4x/day until 2-year backfill complete
 
 ### Pending Work
-- **Google Sheets — NEXT SESSION PRIORITY**: Redesign trigger/refresh strategy for USA (execution timeout issues, proper scheduling, data freshness windows)
+- **Google Sheets**: Copy updated supabase_sales.gs to Apps Script editor, run Setup Triggers V2
 - **Google Sheets**: Add rolling session breakdown columns to USA Daily tab (Rolling 14d/30d/60d/90d Browser/Mobile Sessions)
-- **Google Sheets**: Use Duplicate Country Tab menu to create other country tabs (USA-only for now, other countries later)
+- **Google Sheets**: Use Duplicate Country Tab menu to create other country tabs
 - Monthly TST pull (`--period-type MONTH`)
 - Phase 4: Product master + COGS
 - Phase 5: CM1/CM2 calculation views
@@ -87,7 +87,9 @@ Pull tracking: `sp_api_pulls`, `sp_inventory_pulls`, `sp_sqp_pulls`, `sp_financi
 - **NEVER insert columns between existing dump sheet columns** — always APPEND after last column. Inserting shifts column letters and breaks all formulas.
 - **NEVER reorder DB Helper rows** — always APPEND new sections below existing ones. Existing formulas reference these by section name, but column letters in the mappings are positional.
 - **SP Data incremental dedup: Date format mismatch** — Sheets converts date strings to Date objects. Must format back to `yyyy-MM-dd` before building dedup keys, otherwise every refresh adds duplicate rows.
-- **USA-only focus** — complete USA fully before expanding to other countries.
+- **V2 triggers use LockService** — `ScriptLock` is project-wide. Morning queue and intra-day dispatchers share the same lock. If lock unavailable, invocation skips (next slot picks up).
+- **nearMinute() has ±15 min jitter** — never schedule two triggers closer than 20 min apart. V2 uses ≥2h spacing for NA, 6h for ROW.
+- **Morning queue in ScriptProperties** — JSON array, max ~9KB. Queue auto-clears when all jobs complete. If stuck, manually clear via Script Properties editor.
 
 ## Reference Docs (read on-demand, NOT every session)
 

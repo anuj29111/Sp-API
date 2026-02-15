@@ -496,8 +496,10 @@ function refreshSPData(country, configKey) {
       }
       Logger.log('SP Data ' + country + ' (incremental): total ' + dedupedRows.length);
     }
+    updateRefreshTimestamp(country, 'sales');
   } catch (e) {
     Logger.log('Error refreshing SP Data ' + country + ': ' + e.message + '\n' + e.stack);
+    logError(country, 'sales', e.message);
     throw e;
   }
 }
@@ -558,8 +560,10 @@ function refreshDailyDumpData(country, configKey) {
       sheet.getRange(2, 1, output.length, headers.length).setValues(output);
     }
     Logger.log('SP Daily ' + country + ': ' + output.length + ' rows');
+    updateRefreshTimestamp(country, 'full_daily');
   } catch (e) {
     Logger.log('Error refreshing SP Daily ' + country + ': ' + e.message + '\n' + e.stack);
+    logError(country, 'full_daily', e.message);
     throw e;
   }
 }
@@ -637,8 +641,10 @@ function refreshRollingData(country, configKey) {
       sheet.getRange(2, 1, output.length, headers.length).setValues(output);
     }
     Logger.log('SP Rolling ' + country + ': ' + output.length + ' rows');
+    updateRefreshTimestamp(country, 'rolling');
   } catch (e) {
     Logger.log('Error refreshing SP Rolling ' + country + ': ' + e.message + '\n' + e.stack);
+    logError(country, 'rolling', e.message);
     throw e;
   }
 }
@@ -728,8 +734,10 @@ function refreshInventoryData(country, configKey) {
       sheet.getRange(2, 1, output.length, headers.length).setValues(output);
     }
     Logger.log('SP Inventory ' + country + ': FBA=' + fbaData.length + ' AWD=' + awdData.length);
+    updateRefreshTimestamp(country, 'inventory');
   } catch (e) {
     Logger.log('Error refreshing SP Inventory ' + country + ': ' + e.message + '\n' + e.stack);
+    logError(country, 'inventory', e.message);
     throw e;
   }
 }
@@ -806,8 +814,10 @@ function refreshFeesData(country, configKey) {
       sheet.getRange(2, 1, output.length, headers.length).setValues(output);
     }
     Logger.log('SP Fees ' + country + ': estimates=' + feeEstimates.length + ' settlements=' + settleFees.length + ' storage=' + storageFees.length);
+    updateRefreshTimestamp(country, 'fees');
   } catch (e) {
     Logger.log('Error refreshing SP Fees ' + country + ': ' + e.message + '\n' + e.stack);
+    logError(country, 'fees', e.message);
     throw e;
   }
 }
@@ -1199,8 +1209,18 @@ function onOpen() {
     .addSeparator()
     .addSubMenu(ui.createMenu('Setup')
       .addItem('Setup DB Helper', 'setupDBHelper')
-      .addItem('Setup Triggers', 'setupTriggers')
-      .addItem('Remove All Triggers', 'removeAllTriggers'))
+      .addItem('Setup Triggers (V1 — legacy)', 'setupTriggers')
+      .addItem('Remove V1 Triggers', 'removeAllTriggers'))
+    .addSeparator()
+    .addSubMenu(ui.createMenu('Automation V2')
+      .addItem('Setup Triggers V2', 'setupTriggersV2')
+      .addItem('Remove Triggers V2', 'removeTriggersV2')
+      .addItem('Build Morning Queue Now', 'buildMorningQueue')
+      .addItem('Run Queue (1 cycle)', 'dispatch_morning_queue')
+      .addSeparator()
+      .addItem('View Refresh Status', 'createRefreshStatusSheet')
+      .addItem('View Queue Status', 'viewQueueStatus')
+      .addItem('View Error Log', 'viewErrorLog'))
     .addSeparator()
     .addSubMenu(ui.createMenu('Debug')
       .addItem('Test Connection', 'testConnection')
@@ -1611,4 +1631,655 @@ function showFormulaExamples() {
     '=BYROW(INDIRECT($D$2),LAMBDA(asin,IF(asin="","",LET(s,"\'"&VLOOKUP(G$3,\'DB Helper\'!$A:$B,2,0)&" "&$B$2&"\'!",IFERROR(INDEX(INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$C,3,0)),MATCH(asin,INDIRECT(s&VLOOKUP(G$3,\'DB Helper\'!$A:$D,4,0)),0)),0)))))';
 
   SpreadsheetApp.getUi().alert(examples);
+}
+
+
+// ============================================
+// V2: SMART DAILY TODAY REFRESH
+// ============================================
+// Only fetches and replaces TODAY's rows in SP Daily.
+// ~100 rows per country, ~15-30 seconds. Used by intra-day triggers.
+
+function refreshDailyToday(country, configKey) {
+  try {
+    var config = getSupabaseConfig();
+    var marketplaceId = config.marketplaces[configKey];
+    if (!marketplaceId) {
+      Logger.log('refreshDailyToday: ' + country + ' not configured, skipping');
+      return;
+    }
+
+    var headers = ['child_asin', 'date', 'units_ordered', 'units_ordered_b2b',
+      'ordered_product_sales', 'ordered_product_sales_b2b',
+      'sessions', 'page_views', 'buy_box_percentage', 'unit_session_percentage'];
+
+    var sheet = getOrCreateDumpSheet('SP Daily', country, headers);
+    var lastRow = sheet.getLastRow();
+    if (lastRow <= 1) {
+      Logger.log('refreshDailyToday: SP Daily ' + country + ' is empty, skipping (run full refresh first)');
+      return;
+    }
+
+    var now = new Date();
+    var today = now.getFullYear() + '-' +
+      String(now.getMonth() + 1).padStart(2, '0') + '-' +
+      String(now.getDate()).padStart(2, '0');
+
+    // 1. Fetch only today's data from Supabase
+    var url = config.url + '/rest/v1/sp_daily_asin_data_deduped?' +
+      'marketplace_id=eq.' + marketplaceId +
+      '&date=eq.' + today +
+      '&select=child_asin,date,units_ordered,units_ordered_b2b,ordered_product_sales,ordered_product_sales_b2b,sessions,page_views,buy_box_percentage,unit_session_percentage' +
+      '&order=child_asin.asc';
+
+    var freshData = fetchAllFromSupabase(url, config);
+    Logger.log('refreshDailyToday ' + country + ': fetched ' + freshData.length + ' rows for ' + today);
+
+    // 2. Read existing data
+    var existingData = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
+
+    // 3. Keep all rows that are NOT today
+    var keptRows = [];
+    for (var i = 0; i < existingData.length; i++) {
+      var rowDate = existingData[i][1];
+      if (rowDate instanceof Date) {
+        rowDate = rowDate.getFullYear() + '-' +
+          String(rowDate.getMonth() + 1).padStart(2, '0') + '-' +
+          String(rowDate.getDate()).padStart(2, '0');
+      }
+      if (String(rowDate) !== today) {
+        keptRows.push(existingData[i]);
+      }
+    }
+
+    // 4. Build fresh today rows
+    var todayRows = [];
+    for (var j = 0; j < freshData.length; j++) {
+      var r = freshData[j];
+      todayRows.push([
+        r.child_asin || '', r.date || '',
+        r.units_ordered || 0, r.units_ordered_b2b || 0,
+        parseFloat(r.ordered_product_sales) || 0, parseFloat(r.ordered_product_sales_b2b) || 0,
+        r.sessions || 0, r.page_views || 0,
+        parseFloat(r.buy_box_percentage) || 0, parseFloat(r.unit_session_percentage) || 0
+      ]);
+    }
+
+    // 5. Combine and write back
+    var allRows = keptRows.concat(todayRows);
+    var maxClear = Math.max(lastRow - 1, allRows.length);
+    sheet.getRange(2, 1, maxClear, headers.length).clear();
+    if (allRows.length > 0) {
+      sheet.getRange(2, 1, allRows.length, headers.length).setValues(allRows);
+    }
+
+    Logger.log('refreshDailyToday ' + country + ': kept ' + keptRows.length + ' old rows, added ' + todayRows.length + ' today rows');
+    updateRefreshTimestamp(country, 'daily_today');
+  } catch (e) {
+    Logger.log('Error in refreshDailyToday ' + country + ': ' + e.message + '\n' + e.stack);
+    logError(country, 'daily_today', e.message);
+    throw e;
+  }
+}
+
+
+// ============================================
+// V2: TIMESTAMP TRACKING
+// ============================================
+
+/**
+ * Records a refresh timestamp in ScriptProperties.
+ * Key format: ts_{country}_{type} e.g. ts_US_sales, ts_CA_daily_today
+ */
+function updateRefreshTimestamp(country, type) {
+  var props = PropertiesService.getScriptProperties();
+  var key = 'ts_' + country + '_' + type;
+  var now = new Date();
+  var timestamp = now.toISOString();
+  props.setProperty(key, timestamp);
+}
+
+/**
+ * Reads all refresh timestamps from ScriptProperties.
+ * Returns { US: { sales: '...', full_daily: '...', ... }, CA: { ... }, ... }
+ */
+function getAllRefreshTimestamps() {
+  var props = PropertiesService.getScriptProperties();
+  var all = props.getProperties();
+  var result = {};
+  var countries = ['US', 'CA', 'UK', 'DE', 'FR', 'AU', 'UAE'];
+  var types = ['sales', 'full_daily', 'daily_today', 'rolling', 'inventory', 'fees'];
+
+  for (var c = 0; c < countries.length; c++) {
+    result[countries[c]] = {};
+    for (var t = 0; t < types.length; t++) {
+      var key = 'ts_' + countries[c] + '_' + types[t];
+      result[countries[c]][types[t]] = all[key] || '';
+    }
+  }
+  return result;
+}
+
+
+// ============================================
+// V2: ERROR LOGGING
+// ============================================
+
+/**
+ * Logs an error to ScriptProperties (JSON array, max 50 entries).
+ */
+function logError(country, sheetType, errorMessage) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var raw = props.getProperty('error_log') || '[]';
+    var log = JSON.parse(raw);
+
+    log.push({
+      timestamp: new Date().toISOString(),
+      country: country,
+      sheetType: sheetType,
+      error: errorMessage
+    });
+
+    // Keep last 50 entries
+    if (log.length > 50) {
+      log = log.slice(log.length - 50);
+    }
+
+    // Prune entries older than 7 days
+    var cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 7);
+    var cutoffStr = cutoff.toISOString();
+    log = log.filter(function(entry) { return entry.timestamp > cutoffStr; });
+
+    props.setProperty('error_log', JSON.stringify(log));
+  } catch (e) {
+    Logger.log('Failed to write error log: ' + e.message);
+  }
+}
+
+/**
+ * Shows recent errors in a dialog.
+ */
+function viewErrorLog() {
+  var props = PropertiesService.getScriptProperties();
+  var raw = props.getProperty('error_log') || '[]';
+  var log = JSON.parse(raw);
+
+  if (log.length === 0) {
+    _safeAlert('No errors recorded in the last 7 days.');
+    return;
+  }
+
+  var lines = log.reverse().map(function(entry) {
+    var date = new Date(entry.timestamp);
+    var dateStr = (date.getMonth() + 1) + '/' + date.getDate() + ' ' +
+      date.getHours() + ':' + String(date.getMinutes()).padStart(2, '0');
+    return dateStr + ' | ' + entry.country + ' | ' + entry.sheetType + ' | ' + entry.error;
+  });
+
+  _safeAlert('Recent Errors (newest first):\n\n' + lines.join('\n'));
+}
+
+
+// ============================================
+// V2: REFRESH STATUS SHEET
+// ============================================
+
+/**
+ * Creates or updates the Refresh Status sheet showing all timestamps.
+ */
+function createRefreshStatusSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Refresh Status');
+
+  if (!sheet) {
+    sheet = ss.insertSheet('Refresh Status');
+  } else {
+    sheet.clear();
+  }
+
+  var timestamps = getAllRefreshTimestamps();
+  var countries = ['US', 'CA', 'UK', 'DE', 'FR', 'AU', 'UAE'];
+  var typeHeaders = ['SP Data', 'SP Daily (Full)', 'SP Daily (Today)', 'SP Rolling', 'SP Inventory', 'SP Fees'];
+  var typeKeys = ['sales', 'full_daily', 'daily_today', 'rolling', 'inventory', 'fees'];
+
+  // Headers
+  var headers = ['Country'].concat(typeHeaders).concat(['Last Error']);
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+  sheet.setFrozenRows(1);
+
+  // Get latest errors per country
+  var props = PropertiesService.getScriptProperties();
+  var errorLog = JSON.parse(props.getProperty('error_log') || '[]');
+  var latestErrors = {};
+  for (var e = 0; e < errorLog.length; e++) {
+    latestErrors[errorLog[e].country] = errorLog[e].error + ' (' + errorLog[e].sheetType + ')';
+  }
+
+  // Data rows
+  var rows = [];
+  for (var c = 0; c < countries.length; c++) {
+    var country = countries[c];
+    var row = [country];
+    for (var t = 0; t < typeKeys.length; t++) {
+      var ts = timestamps[country][typeKeys[t]];
+      if (ts) {
+        var d = new Date(ts);
+        row.push(Utilities.formatDate(d, 'UTC', 'MMM dd h:mm a'));
+      } else {
+        row.push('Never');
+      }
+    }
+    row.push(latestErrors[country] || '');
+    rows.push(row);
+  }
+
+  if (rows.length > 0) {
+    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  }
+
+  // Queue status row
+  var queueRaw = props.getProperty('morning_queue');
+  var queueStatus = 'No queue';
+  if (queueRaw) {
+    var queue = JSON.parse(queueRaw);
+    var done = queue.filter(function(j) { return j.status === 'done'; }).length;
+    var failed = queue.filter(function(j) { return j.status === 'failed' || j.status === 'skipped'; }).length;
+    var pending = queue.filter(function(j) { return j.status === 'pending'; }).length;
+    queueStatus = 'Done: ' + done + '/' + queue.length + ' | Pending: ' + pending + ' | Failed: ' + failed;
+  }
+
+  var queueRow = countries.length + 3;
+  sheet.getRange(queueRow, 1).setValue('Queue Status');
+  sheet.getRange(queueRow, 1).setFontWeight('bold');
+  sheet.getRange(queueRow, 2).setValue(queueStatus);
+
+  // Auto-fit columns
+  for (var col = 1; col <= headers.length; col++) {
+    sheet.autoResizeColumn(col);
+  }
+
+  Logger.log('Refresh Status sheet updated');
+}
+
+
+// ============================================
+// V2: MORNING QUEUE SYSTEM
+// ============================================
+
+var QUEUE_COUNTRIES = ['US', 'CA', 'UK', 'DE', 'FR', 'AU', 'UAE'];
+var QUEUE_BUILD_HOUR_UTC = 7; // Build queue at 7 AM UTC (11 AM Dubai)
+var QUEUE_MAX_ELAPSED_MS = 210000; // 3.5 minutes — leave 2.5 min buffer before 6-min limit
+
+/**
+ * Builds the morning queue: 35 jobs (5 sheets × 7 countries).
+ * Priority: US first, then other countries. Daily+Sales before Rolling/Inventory/Fees.
+ */
+function buildMorningQueue() {
+  var config = getSupabaseConfig();
+  var queue = [];
+
+  // Phase 1: Daily + Sales for all countries (highest priority)
+  for (var i = 0; i < QUEUE_COUNTRIES.length; i++) {
+    var c = QUEUE_COUNTRIES[i];
+    if (!config.marketplaces[c]) continue;
+    queue.push({ country: c, type: 'full_daily', status: 'pending', retries: 0 });
+    queue.push({ country: c, type: 'sales', status: 'pending', retries: 0 });
+  }
+
+  // Phase 2: Rolling, Inventory, Fees (lower priority)
+  for (var j = 0; j < QUEUE_COUNTRIES.length; j++) {
+    var c2 = QUEUE_COUNTRIES[j];
+    if (!config.marketplaces[c2]) continue;
+    queue.push({ country: c2, type: 'rolling', status: 'pending', retries: 0 });
+    queue.push({ country: c2, type: 'inventory', status: 'pending', retries: 0 });
+    queue.push({ country: c2, type: 'fees', status: 'pending', retries: 0 });
+  }
+
+  PropertiesService.getScriptProperties().setProperty('morning_queue', JSON.stringify(queue));
+  Logger.log('Morning queue built: ' + queue.length + ' jobs');
+  return queue;
+}
+
+/**
+ * Routes a queue job to the correct refresh function.
+ */
+function processQueueJob(job) {
+  var country = job.country;
+  switch (job.type) {
+    case 'full_daily':
+      refreshDailyDumpData(country, country);
+      break;
+    case 'sales':
+      refreshSPData(country, country);
+      break;
+    case 'rolling':
+      refreshRollingData(country, country);
+      break;
+    case 'inventory':
+      refreshInventoryData(country, country);
+      break;
+    case 'fees':
+      refreshFeesData(country, country);
+      break;
+    default:
+      throw new Error('Unknown job type: ' + job.type);
+  }
+}
+
+/**
+ * Morning queue dispatcher — fires every 15 minutes via trigger.
+ * Builds queue at 7 AM UTC. Processes 1-2 pending jobs per invocation.
+ * No-op when queue is empty.
+ */
+function dispatch_morning_queue() {
+  var props = PropertiesService.getScriptProperties();
+  var queueRaw = props.getProperty('morning_queue');
+
+  // If no queue exists, check if it's time to build one
+  if (!queueRaw) {
+    var now = new Date();
+    var utcHour = now.getUTCHours();
+    if (utcHour === QUEUE_BUILD_HOUR_UTC) {
+      buildMorningQueue();
+      queueRaw = props.getProperty('morning_queue');
+    } else {
+      return; // No-op: no queue and not time to build one
+    }
+  }
+
+  var queue = JSON.parse(queueRaw);
+
+  // Check if any work remains
+  var hasPending = false;
+  for (var i = 0; i < queue.length; i++) {
+    if (queue[i].status === 'pending' || (queue[i].status === 'failed' && queue[i].retries < 2)) {
+      hasPending = true;
+      break;
+    }
+  }
+
+  if (!hasPending) {
+    // All done (or all skipped) — clear queue
+    props.deleteProperty('morning_queue');
+    Logger.log('Morning queue complete, cleared.');
+    return;
+  }
+
+  // Acquire lock to prevent overlapping runs
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    Logger.log('dispatch_morning_queue: could not acquire lock, skipping this invocation');
+    return;
+  }
+
+  var startTime = new Date().getTime();
+
+  try {
+    // Re-read queue after acquiring lock (another invocation may have updated it)
+    queueRaw = props.getProperty('morning_queue');
+    if (!queueRaw) {
+      Logger.log('Queue disappeared after lock acquired');
+      return;
+    }
+    queue = JSON.parse(queueRaw);
+
+    // Process pending/failed jobs until time runs out
+    for (var j = 0; j < queue.length; j++) {
+      var job = queue[j];
+
+      // Skip done/skipped jobs
+      if (job.status === 'done' || job.status === 'skipped') continue;
+
+      // Skip failed jobs that have exhausted retries
+      if (job.status === 'failed' && job.retries >= 2) {
+        job.status = 'skipped';
+        continue;
+      }
+
+      // Check time budget
+      var elapsed = new Date().getTime() - startTime;
+      if (elapsed > QUEUE_MAX_ELAPSED_MS) {
+        Logger.log('Time budget exceeded (' + Math.round(elapsed / 1000) + 's), saving and exiting');
+        break;
+      }
+
+      // Process this job
+      Logger.log('Processing: ' + job.country + ':' + job.type + ' (attempt ' + (job.retries + 1) + ')');
+      try {
+        processQueueJob(job);
+        job.status = 'done';
+        Logger.log('Done: ' + job.country + ':' + job.type);
+      } catch (e) {
+        job.retries++;
+        job.status = 'failed';
+        job.lastError = e.message;
+        Logger.log('Failed: ' + job.country + ':' + job.type + ' — ' + e.message);
+        logError(job.country, job.type, e.message);
+      }
+
+      // Save progress after each job (in case we crash)
+      props.setProperty('morning_queue', JSON.stringify(queue));
+    }
+
+    // Final save
+    props.setProperty('morning_queue', JSON.stringify(queue));
+
+    // Check if all done now
+    var allDone = true;
+    for (var k = 0; k < queue.length; k++) {
+      if (queue[k].status === 'pending' || (queue[k].status === 'failed' && queue[k].retries < 2)) {
+        allDone = false;
+        break;
+      }
+    }
+    if (allDone) {
+      props.deleteProperty('morning_queue');
+      Logger.log('Morning queue fully processed and cleared.');
+    }
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Shows current queue state in an alert dialog.
+ */
+function viewQueueStatus() {
+  var props = PropertiesService.getScriptProperties();
+  var queueRaw = props.getProperty('morning_queue');
+
+  if (!queueRaw) {
+    _safeAlert('No active queue. Queue builds automatically at ' + QUEUE_BUILD_HOUR_UTC + ':00 UTC daily.');
+    return;
+  }
+
+  var queue = JSON.parse(queueRaw);
+  var done = 0, pending = 0, failed = 0, skipped = 0;
+  var failedJobs = [];
+
+  for (var i = 0; i < queue.length; i++) {
+    switch (queue[i].status) {
+      case 'done': done++; break;
+      case 'pending': pending++; break;
+      case 'failed': failed++; failedJobs.push(queue[i].country + ':' + queue[i].type + ' — ' + (queue[i].lastError || 'unknown')); break;
+      case 'skipped': skipped++; failedJobs.push(queue[i].country + ':' + queue[i].type + ' (skipped after 2 retries)'); break;
+    }
+  }
+
+  var msg = 'Queue: ' + queue.length + ' jobs\n\n' +
+    'Done: ' + done + '\n' +
+    'Pending: ' + pending + '\n' +
+    'Failed: ' + failed + '\n' +
+    'Skipped: ' + skipped;
+
+  if (failedJobs.length > 0) {
+    msg += '\n\nFailed/Skipped:\n' + failedJobs.join('\n');
+  }
+
+  _safeAlert(msg);
+}
+
+
+// ============================================
+// V2: INTRA-DAY DISPATCH FUNCTIONS
+// ============================================
+// Each dispatch function acquires a lock to prevent concurrent writes to
+// the same SP Daily sheet. Lock ensures no duplicate/corrupt data if
+// Google fires two triggers close together.
+
+/**
+ * Helper: runs refreshDailyToday for a list of countries with lock protection.
+ */
+function _runIntradayRefresh(countries) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    Logger.log('_runIntradayRefresh: could not acquire lock, skipping');
+    return;
+  }
+  try {
+    for (var i = 0; i < countries.length; i++) {
+      try {
+        refreshDailyToday(countries[i], countries[i]);
+      } catch (e) {
+        Logger.log('Intraday refresh failed for ' + countries[i] + ': ' + e.message);
+        // Continue with other countries even if one fails
+      }
+    }
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// --- NA Intra-day (US + CA): 7 triggers ---
+// Synced to NA orders pull schedule (UTC: 0,1,2,3,5,7,8,11,13,14,15,17,19,20,22,23)
+// Triggers at: 3,8,11,14,17,20,23 UTC (all ≥2h apart)
+
+function dispatch_na_intraday_1() { _runIntradayRefresh(['US', 'CA']); } // ~3:10 UTC (7:10 AM Dubai)
+function dispatch_na_intraday_2() { _runIntradayRefresh(['US', 'CA']); } // ~8:10 UTC (12:10 PM Dubai)
+function dispatch_na_intraday_3() { _runIntradayRefresh(['US', 'CA']); } // ~11:10 UTC (3:10 PM Dubai)
+function dispatch_na_intraday_4() { _runIntradayRefresh(['US', 'CA']); } // ~14:10 UTC (6:10 PM Dubai)
+function dispatch_na_intraday_5() { _runIntradayRefresh(['US', 'CA']); } // ~17:10 UTC (9:10 PM Dubai)
+function dispatch_na_intraday_6() { _runIntradayRefresh(['US', 'CA']); } // ~20:10 UTC (12:10 AM Dubai)
+function dispatch_na_intraday_7() { _runIntradayRefresh(['US', 'CA']); } // ~23:10 UTC (3:10 AM Dubai)
+
+// --- Rest-of-World Intra-day (UK, DE, FR, AU, UAE): 3 triggers ---
+// Synced to best overlap of EU Core/AU/UAE pull times
+// Triggers at: 8,14,20 UTC (6h apart)
+
+function dispatch_row_intraday_1() { _runIntradayRefresh(['UK', 'DE', 'FR', 'AU', 'UAE']); } // ~8:20 UTC (12:20 PM Dubai)
+function dispatch_row_intraday_2() { _runIntradayRefresh(['UK', 'DE', 'FR', 'AU', 'UAE']); } // ~14:20 UTC (6:20 PM Dubai)
+function dispatch_row_intraday_3() { _runIntradayRefresh(['UK', 'DE', 'FR', 'AU', 'UAE']); } // ~20:20 UTC (12:20 AM Dubai)
+
+
+// ============================================
+// V2: SETUP & REMOVE TRIGGERS
+// ============================================
+
+/**
+ * Creates the V2 trigger set: 11 triggers total.
+ * 1× everyMinutes(15) for morning queue
+ * 7× daily for NA intra-day (US+CA)
+ * 3× daily for ROW intra-day (UK,DE,FR,AU,UAE)
+ *
+ * Removes existing V2 triggers first (dispatch_ prefix) to avoid duplicates.
+ */
+function setupTriggersV2() {
+  var ui = SpreadsheetApp.getUi();
+
+  var confirm = ui.alert(
+    'Setup V2 Triggers',
+    'This will create 11 triggers:\n\n' +
+    '1× Morning queue (every 15 min)\n' +
+    '7× NA intra-day (US+CA, ~every 3h)\n' +
+    '3× ROW intra-day (UK/DE/FR/AU/UAE, ~every 6h)\n\n' +
+    'Any existing "dispatch_" triggers will be removed first.\n\n' +
+    'Continue?',
+    ui.ButtonSet.YES_NO);
+
+  if (confirm !== ui.Button.YES) return;
+
+  // Remove existing V2 triggers
+  var existing = ScriptApp.getProjectTriggers();
+  var deleted = 0;
+  for (var t = 0; t < existing.length; t++) {
+    if (existing[t].getHandlerFunction().indexOf('dispatch_') === 0) {
+      ScriptApp.deleteTrigger(existing[t]);
+      deleted++;
+    }
+  }
+
+  var created = 0;
+
+  // 1. Morning queue dispatcher — every 15 minutes
+  ScriptApp.newTrigger('dispatch_morning_queue')
+    .timeBased()
+    .everyMinutes(15)
+    .create();
+  created++;
+
+  // 2-8. NA intra-day triggers (7 triggers, ≥2h apart)
+  var naSchedule = [
+    { func: 'dispatch_na_intraday_1', hour: 3, minute: 10 },
+    { func: 'dispatch_na_intraday_2', hour: 8, minute: 10 },
+    { func: 'dispatch_na_intraday_3', hour: 11, minute: 10 },
+    { func: 'dispatch_na_intraday_4', hour: 14, minute: 10 },
+    { func: 'dispatch_na_intraday_5', hour: 17, minute: 10 },
+    { func: 'dispatch_na_intraday_6', hour: 20, minute: 10 },
+    { func: 'dispatch_na_intraday_7', hour: 23, minute: 10 }
+  ];
+
+  for (var n = 0; n < naSchedule.length; n++) {
+    ScriptApp.newTrigger(naSchedule[n].func)
+      .timeBased()
+      .atHour(naSchedule[n].hour)
+      .nearMinute(naSchedule[n].minute)
+      .everyDays(1)
+      .create();
+    created++;
+  }
+
+  // 9-11. ROW intra-day triggers (3 triggers, 6h apart)
+  var rowSchedule = [
+    { func: 'dispatch_row_intraday_1', hour: 8, minute: 20 },
+    { func: 'dispatch_row_intraday_2', hour: 14, minute: 20 },
+    { func: 'dispatch_row_intraday_3', hour: 20, minute: 20 }
+  ];
+
+  for (var r = 0; r < rowSchedule.length; r++) {
+    ScriptApp.newTrigger(rowSchedule[r].func)
+      .timeBased()
+      .atHour(rowSchedule[r].hour)
+      .nearMinute(rowSchedule[r].minute)
+      .everyDays(1)
+      .create();
+    created++;
+  }
+
+  ui.alert('V2 Triggers Created!\n\n' +
+    'Removed: ' + deleted + ' old dispatch_ triggers\n' +
+    'Created: ' + created + ' new triggers\n\n' +
+    'Schedule (UTC):\n' +
+    'Morning Queue: every 15 min (builds at ' + QUEUE_BUILD_HOUR_UTC + ':00 UTC)\n' +
+    'NA (US+CA): 3:10, 8:10, 11:10, 14:10, 17:10, 20:10, 23:10\n' +
+    'ROW (UK/DE/FR/AU/UAE): 8:20, 14:20, 20:20\n\n' +
+    'Trigger slots used: ' + created + '/20');
+}
+
+/**
+ * Removes all V2 triggers (dispatch_ prefix only).
+ * Does NOT remove old trigger_ functions (backward compatible).
+ */
+function removeTriggersV2() {
+  var existing = ScriptApp.getProjectTriggers();
+  var deleted = 0;
+  for (var t = 0; t < existing.length; t++) {
+    if (existing[t].getHandlerFunction().indexOf('dispatch_') === 0) {
+      ScriptApp.deleteTrigger(existing[t]);
+      deleted++;
+    }
+  }
+  _safeAlert('Removed ' + deleted + ' V2 (dispatch_) triggers.');
 }
