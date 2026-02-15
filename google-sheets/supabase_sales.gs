@@ -454,17 +454,47 @@ function refreshSPData(country, configKey) {
       var existingData = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
       var keptRows = [];
       for (var e = 0; e < existingData.length; e++) {
-        var key = String(existingData[e][0]) + '|' + String(existingData[e][2]) + '|' + String(existingData[e][1]);
+        // Format date column (index 2) consistently — Sheets converts date strings
+        // to Date objects, so String(date) gives "Sat Jan 01..." instead of "2026-01-01"
+        var period = existingData[e][2];
+        if (period instanceof Date) {
+          period = period.getFullYear() + '-' +
+            String(period.getMonth() + 1).padStart(2, '0') + '-' +
+            String(period.getDate()).padStart(2, '0');
+        }
+        var key = String(existingData[e][0]) + '|' + period + '|' + String(existingData[e][1]);
         if (!freshKeys[key]) keptRows.push(existingData[e]);
       }
 
       var finalRows = keptRows.concat(freshRows);
-      var maxClear = Math.max(lastRow - 1, finalRows.length);
-      sheet.getRange(2, 1, maxClear, 11).clear();
-      if (finalRows.length > 0) {
-        sheet.getRange(2, 1, finalRows.length, 11).setValues(finalRows);
+
+      // Safety dedup pass — prevent any remaining duplicates from accumulating
+      var seenKeys = {};
+      var dedupedRows = [];
+      for (var d = finalRows.length - 1; d >= 0; d--) {
+        var dp = finalRows[d][2];
+        if (dp instanceof Date) {
+          dp = dp.getFullYear() + '-' +
+            String(dp.getMonth() + 1).padStart(2, '0') + '-' +
+            String(dp.getDate()).padStart(2, '0');
+        }
+        var dk = String(finalRows[d][0]) + '|' + dp + '|' + String(finalRows[d][1]);
+        if (!seenKeys[dk]) {
+          seenKeys[dk] = true;
+          dedupedRows.push(finalRows[d]);
+        }
       }
-      Logger.log('SP Data ' + country + ' (incremental): total ' + finalRows.length);
+      dedupedRows.reverse(); // restore original order
+      if (dedupedRows.length < finalRows.length) {
+        Logger.log('Dedup removed ' + (finalRows.length - dedupedRows.length) + ' duplicate rows');
+      }
+
+      var maxClear = Math.max(lastRow - 1, dedupedRows.length);
+      sheet.getRange(2, 1, maxClear, 11).clear();
+      if (dedupedRows.length > 0) {
+        sheet.getRange(2, 1, dedupedRows.length, 11).setValues(dedupedRows);
+      }
+      Logger.log('SP Data ' + country + ' (incremental): total ' + dedupedRows.length);
     }
   } catch (e) {
     Logger.log('Error refreshing SP Data ' + country + ': ' + e.message + '\n' + e.stack);
